@@ -1,0 +1,17 @@
+
+# pytest / coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# lean_oracle (cikti + izole venv)
+tools/lean_oracle/.venv/
+tools/lean_oracle/oracle_export/
+tools/lean_oracle/algorithm/oracle_input/
+tools/lean_oracle/algorithm/backtests/
+tools/lean_oracle/algorithm/data/
+tools/lean_oracle/lean_workspace/
+scripts/.session_*
+scripts/telegram_login.py
+scripts/_poll_*.py
+scripts/telegram_diag.py

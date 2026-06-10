@@ -1,0 +1,25 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Data / DB
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Env
+backend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+*.log
+data/pm2/
+
+# Handover (gorev teslim dosyalari — repoya girmez)
+Handover/

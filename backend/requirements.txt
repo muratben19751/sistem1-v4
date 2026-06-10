@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+python-dotenv==1.0.1
+websockets==14.1
+telethon==1.38.1
+anthropic==0.42.0
+cryptography>=42.0.0,<47.0.0
+
+# --- test (gelistirme) ---
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0

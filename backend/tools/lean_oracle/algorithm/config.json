@@ -1,0 +1,7 @@
+{
+  "algorithm-language": "Python",
+  "parameters": {},
+  "description": "sistem1-v4 run_backtest icra dogrulama oracle'i (LEAN replay)",
+  "organization-id": "",
+  "python-venv": null
+}

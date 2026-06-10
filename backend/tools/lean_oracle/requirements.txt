@@ -1,0 +1,4 @@
+# lean_oracle yalnizca bu modul icin; ana backend requirements'a EKLENMEZ.
+lean==1.0.225
+# lean CLI pkg_resources'a baglidir; setuptools>=81 onu kaldirir -> Python 3.14'te pin sart.
+setuptools<81
