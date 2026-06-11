@@ -38,6 +38,8 @@ export interface OptimizerResultRow {
   live_account_id?: number | null;
   live_account_name?: string | null;
   live_bot_enabled?: number | null;
+  live_running?: boolean | null;  // gercek runtime durumu (bot fiilen calisiyor mu)
+  badge?: 'live' | 'stopped' | null;  // deploy_state tabanli rozet (CANLI/STOPPED)
   leanParity?: 'pass' | 'warn' | 'fail' | null;
   leanParityDetail?: { verdict: string; winRateRel?: number | null; tradeRel?: number | null; window?: string; checkedAt?: string } | null;
 }
@@ -72,8 +74,10 @@ interface BacktestStore {
   fetchOptimizer: () => Promise<void>;
   startOptimizer: () => Promise<void>;
   stopOptimizer: () => Promise<void>;
-  applyConfig: (accountId: number, resultId: number) => Promise<{ success: boolean }>;
+  applyConfig: (accountId: number, resultId: number) => Promise<{ success: boolean; name: string; started: boolean }>;
   deployConfig: (resultId: number, accountId?: number) => Promise<{ success: boolean; accountId: number; name: string; started: boolean }>;
+  stopStrategy: (resultId: number) => Promise<{ success: boolean; stopped: number[] }>;
+  fetchFreeAccounts: () => Promise<Array<{ id: number; name: string; engine: string; hasCredentials: boolean; running: boolean }>>;
   pushOptLog: (msg: string) => void;
 }
 
@@ -132,7 +136,9 @@ export const useBacktestStore = create<BacktestStore>((set, get) => ({
   },
   startOptimizer: async () => { try { const s = await api.post<OptimizerStatus>('/optimizer/start'); set({ optStatus: s }); } catch { /* */ } },
   stopOptimizer: async () => { try { const s = await api.post<OptimizerStatus>('/optimizer/stop'); set({ optStatus: s }); } catch { /* */ } },
-  applyConfig: async (accountId, resultId) => { return api.post<{ success: boolean }>('/optimizer/apply', { accountId, resultId }); },
+  applyConfig: async (accountId, resultId) => { return api.post<{ success: boolean; name: string; started: boolean }>('/optimizer/apply', { accountId, resultId }); },
   deployConfig: async (resultId, accountId) => { return api.post<{ success: boolean; accountId: number; name: string; started: boolean }>('/optimizer/deploy', { resultId, accountId }); },
+  stopStrategy: async (resultId) => { return api.post<{ success: boolean; stopped: number[] }>('/optimizer/stop-strategy', { resultId }); },
+  fetchFreeAccounts: async () => { return api.get<Array<{ id: number; name: string; engine: string; hasCredentials: boolean; running: boolean }>>('/optimizer/free-accounts'); },
   pushOptLog: (msg) => set((st) => ({ optLog: [...st.optLog.slice(-200), msg] })),
 }));

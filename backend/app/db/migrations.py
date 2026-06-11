@@ -630,4 +630,14 @@ MIGRATIONS: list[tuple[str, str]] = [
             SELECT applied_at FROM migrations WHERE name = '038-max-drawdown-toggle'
           );
     """),
+    # Strateji deploy durumu (CANLI/STOPPED) artik API bagintisindan BAGIMSIZ, stratejiye
+    # yapisik: 'live' | 'stopped' | NULL. Boylece bir API yeniden kullanilsa bile eski
+    # stratejinin STOPPED rozeti kaybolmaz. Mevcut deployed sonuclari 'live' isaretle.
+    ("040-optimizer-deploy-state", """
+        ALTER TABLE optimizer_results ADD COLUMN deploy_state TEXT;
+        UPDATE optimizer_results SET deploy_state = 'live' WHERE deployed_account_id IS NOT NULL;
+    """),
+    ("041-bot-logs-id-index", """
+        CREATE INDEX IF NOT EXISTS idx_bot_logs_account_id_id ON bot_logs(account_id, id DESC);
+    """),
 ]

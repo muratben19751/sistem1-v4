@@ -13,14 +13,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   headers.set('Content-Type', 'application/json');
   applyStaticAuthHeader(headers);
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-    credentials: 'same-origin',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers,
+      credentials: 'same-origin',
+    });
+  } catch (err) {
+    // Sayfalardaki catch{} blokları hatayı yutuyor; en azından konsolda iz kalsın.
+    console.warn(`[api] ${options?.method || 'GET'} ${path} ağ hatası:`, err);
+    throw err;
+  }
   if (res.status === 401) notifyAuthRequired();
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: res.statusText }));
+    console.warn(`[api] ${options?.method || 'GET'} ${path} -> ${res.status}:`, error.error || res.statusText);
     throw new Error(error.error || res.statusText);
   }
   return res.json();

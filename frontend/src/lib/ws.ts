@@ -38,7 +38,9 @@ class WsClient {
         if (handlers) {
           for (const handler of handlers) handler(msg.data);
         }
-      } catch {}
+      } catch (err) {
+        console.warn('[ws] mesaj işlenemedi:', err, event.data);
+      }
     };
 
     this.ws.onopen = () => {

@@ -89,7 +89,15 @@ def encrypt_secret(value: str | None) -> str | None:
         return None
     if value.startswith(PREFIX):
         return value
-    return _encrypt_with_material(value, _resolve_material())
+    material = _resolve_material()
+    # Fail-secure: herkesce bilinen 'dev-token' ile YENI sifreleme yapilmaz (eski
+    # kayitlarin cozulmesi ensure_credential_encryption fallback'inde korunur).
+    if material == _DEV_FALLBACK:
+        raise RuntimeError(
+            "Kimlik bilgisi sifrelenemiyor: kalici anahtar yok (data/.credential-key "
+            "yazilamadi ve CREDENTIAL_ENCRYPTION_KEY/AUTH_TOKEN ayarli degil)."
+        )
+    return _encrypt_with_material(value, material)
 
 
 def decrypt_secret(value: str | None) -> str:

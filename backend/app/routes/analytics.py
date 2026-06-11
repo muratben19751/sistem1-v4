@@ -3,6 +3,7 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from ..core.errors import public_error
 from ..db.database import query_one
 from ..agents.strategy import analyze_symbol
 from ..services.bybit_api import is_tradable_linear_symbol
@@ -122,7 +123,7 @@ async def analyze(symbol: str, request: Request):
         result = await analyze_symbol(sym, enabled_rules, account_id if account_id is not None else None)
         return _serialize_signal(result)
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "analytics")})
 
 
 @router.get("/rules")
@@ -138,7 +139,7 @@ async def scan(request: Request):
         result = await run_scan(limit)
         return result
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "analytics")})
 
 
 @router.get("/scan/last")

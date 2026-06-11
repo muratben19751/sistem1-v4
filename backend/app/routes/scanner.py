@@ -24,7 +24,7 @@ async def top_gainers():
         gainers = await get_top_gainers(20)
         return gainers
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "scanner")})
 
 
 @router.get("/ticker/{symbol}")
@@ -40,7 +40,7 @@ async def ticker(symbol: str):
             return JSONResponse(status_code=404, content={"error": "Symbol not found"})
         return result
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "scanner")})
 
 
 @router.get("/klines/{symbol}")
@@ -66,4 +66,4 @@ async def klines(symbol: str, request: Request):
         limit = min(parsed_limit, 1000) if parsed_limit is not None and parsed_limit > 0 else 200
         return await get_klines(sym, interval, limit)
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "scanner")})

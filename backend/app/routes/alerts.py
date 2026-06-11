@@ -7,6 +7,7 @@ import time
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from ..core.errors import public_error
 from ..db.database import DB_PATH, query_one, query_all, execute
 from ..services.telegram_client import backfill_channel_history
 from ..services.telegram_listener import process_incoming_alert
@@ -177,7 +178,7 @@ async def backfill(request: Request):
     try:
         results = await backfill_channel_history(limit)
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "alerts")})
     return {
         "success": True,
         "totalInserted": sum(result["inserted"] for result in results),

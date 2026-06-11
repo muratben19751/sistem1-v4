@@ -8,7 +8,7 @@ from ..core.event_bus import event_bus
 from ..core.time import now_ms
 from ..db.database import query_one, query_all, execute
 from ..agents.strategy import analyze_symbol
-from ..agents.risk import evaluate_risk, account_gate
+from ..agents.risk import evaluate_risk, account_gate, set_cooldown
 from ..agents.execution import execute_order, set_engine
 from ..agents.monitor import start_monitor, stop_monitor, is_monitor_running, take_equity_snapshot, check_positions
 from ..services.bybit_api import get_top_gainers, is_tradable_linear_symbol
@@ -310,7 +310,10 @@ async def _run_bot_cycle_inner(account_id: int, state: dict) -> None:
                     state["totalOrders"] += 1
                     add_log(account_id, "info", f"Order filled: {side} {candidate['symbol']} @ {order_result.fill_price}")
                 else:
-                    add_log(account_id, "error", f"Order failed: {candidate['symbol']} - {order_result.error}")
+                    # Cooldown: ayni sembol her taramada yeniden denenip ayni hatayi
+                    # uretmesin (kalici emir redleri gunlerce log/API spam'i yapiyordu).
+                    set_cooldown(account_id, candidate["symbol"])
+                    add_log(account_id, "error", f"Order failed: {candidate['symbol']} - {order_result.error} (15m cooldown)")
             except Exception as err:  # noqa: BLE001
                 detail = str(err) or type(err).__name__  # bos mesajli (httpx timeout vb.) hatalari acikla
                 add_log(account_id, "error", f"Analysis failed for {candidate['symbol']}: {detail}")
@@ -384,6 +387,10 @@ def start_bot(account_id: int) -> dict:
     state["totalScans"] = 0
     state["totalSignals"] = 0
     state["totalOrders"] = 0
+    # Temiz tarama bayragi: hizli stop->start (apply) sonrasi iptal edilen eski cycle
+    # ile yeni cycle ayni 'scanning' bayragini paylasinca takilip kaliyordu -> yeni scan
+    # loop her turda "skipping" deyip hic taramaz (bot calisir gorunur ama olu).
+    state["scanning"] = False
     state["logs"] = []
 
     try:
@@ -427,6 +434,7 @@ def stop_bot(account_id: int, preserve_enabled: bool = False) -> dict:
     state = _get_state(account_id)
     was_running = state["status"] == "running"
     state["status"] = "stopped"
+    state["scanning"] = False  # iptal edilen cycle'in bayragi takili kalmasin
     for key in ("cycle_task", "scan_task", "snapshot_task", "initial_snapshot_task"):
         task = state.get(key)
         _cancel_owned_task(task)

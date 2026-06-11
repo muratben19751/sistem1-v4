@@ -6,6 +6,7 @@ import { useAccountStore } from '../store/account-store';
 import { useTradingStore } from '../store/trading-store';
 import { usePositionStore } from '../store/position-store';
 import { wsClient } from '../lib/ws';
+import { debounce } from '../lib/debounce';
 import { winRateBreakdown } from '../lib/trade-categorize';
 
 export default function Dashboard() {
@@ -22,17 +23,21 @@ export default function Dashboard() {
   }, [activeAccountId, fetchTrades, fetchMetrics24h]);
 
   useEffect(() => {
-    const unsub1 = wsClient.on('position:opened', () => {
+    // Debounce: toplu acilis/kapanislarda (N pozisyon ayni saniyede) her WS olayi
+    // basina 4 fetch yerine patlama basina tek refresh.
+    const refreshOpened = debounce(() => {
       fetchPositions(activeAccountId);
       fetchAccounts();
-    });
-    const unsub2 = wsClient.on('position:closed', () => {
+    }, 200);
+    const refreshClosed = debounce(() => {
       fetchPositions(activeAccountId);
       fetchAccounts();
       fetchTrades(activeAccountId);
       fetchMetrics24h(activeAccountId);
-    });
-    return () => { unsub1(); unsub2(); };
+    }, 200);
+    const unsub1 = wsClient.on('position:opened', refreshOpened);
+    const unsub2 = wsClient.on('position:closed', refreshClosed);
+    return () => { unsub1(); unsub2(); refreshOpened.cancel(); refreshClosed.cancel(); };
   }, [activeAccountId, fetchPositions, fetchAccounts, fetchTrades, fetchMetrics24h]);
 
   if (!isAll && !account) {

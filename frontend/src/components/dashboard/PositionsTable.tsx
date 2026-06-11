@@ -4,6 +4,7 @@ import { useAccountStore } from '../../store/account-store';
 import { usePositionStore } from '../../store/position-store';
 import { useCustomizationStore } from '../../store/customization-store';
 import { wsClient } from '../../lib/ws';
+import { debounce } from '../../lib/debounce';
 import { closePosition } from '../../lib/trading-actions';
 import { formatUsd, formatPercent, formatPrice } from '../../lib/formatters';
 import { aggregatePositionPnlPercent, positionMargin, positionMarkValue, positionPnlPercent, slDistancePct, slDistanceTone } from '../../lib/position-math';
@@ -104,6 +105,8 @@ export default function PositionsTable() {
 
   useEffect(() => {
     fetchPositions(activeAccountId);
+    // Toplu olay patlamalarinda olay basina degil, patlama basina tek fetch.
+    const refresh = debounce(() => fetchPositions(activeAccountId), 200);
     const unsub1 = wsClient.on('position:updated', (data) => {
       updatePosition(
         data.symbol,
@@ -114,14 +117,14 @@ export default function PositionsTable() {
     });
     const unsub2 = wsClient.on('position:closed', (data) => {
       if (data.partial) {
-        fetchPositions(activeAccountId);
+        refresh();
         return;
       }
       removePosition(data.symbol, data.side, data.accountId);
     });
-    const unsub3 = wsClient.on('position:opened', () => fetchPositions(activeAccountId));
-    const unsub4 = wsClient.on('order:filled', () => fetchPositions(activeAccountId));
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+    const unsub3 = wsClient.on('position:opened', refresh);
+    const unsub4 = wsClient.on('order:filled', refresh);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); refresh.cancel(); };
   }, [activeAccountId, fetchPositions, updatePosition, removePosition]);
 
   useEffect(() => {

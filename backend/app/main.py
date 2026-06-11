@@ -52,6 +52,7 @@ from .services.health_services import get_services_health
 from .services.bybit_api import close_client as close_bybit_api_client
 from .engines.bybit_engine import close_private_client as close_bybit_private_client
 from .services.kline_cache import prune_kline_cache
+from .services.db_maintenance import start_db_maintenance, stop_db_maintenance
 
 from .routes.accounts import router as accounts_router
 from .routes.bot import router as bot_router
@@ -101,6 +102,7 @@ async def lifespan(app: FastAPI):
     seed_accounts()
     init_event_bridge(asyncio.get_running_loop())
     _startup_maintenance_tasks.append(asyncio.create_task(asyncio.to_thread(prune_kline_cache)))
+    start_db_maintenance()
 
     log.info(f"Server running on {config.host}:{config.port}")
     if config.background.price_updater:
@@ -159,6 +161,10 @@ async def lifespan(app: FastAPI):
         log.warn(f"stop bots error: {err}")
     try:
         stop_global_price_updater()
+    except Exception:
+        pass
+    try:
+        stop_db_maintenance()
     except Exception:
         pass
     try:
@@ -308,4 +314,8 @@ if _DIST.exists():
         # dist disina cikan path'ler (.., encoded dot-segment) index.html'e duser
         if full_path and candidate.is_relative_to(_DIST.resolve()) and candidate.is_file():
             return FileResponse(str(candidate))
-        return FileResponse(str(_DIST / "index.html"))
+        # index.html no-cache: tarayici hep en guncel bundle'i alsin (hash'li asset'ler
+        # zaten degismez isimli oldugundan cache'lenebilir). Aksi halde kullanici eski
+        # uygulamayi gorup "olmadi" diyebiliyor.
+        return FileResponse(str(_DIST / "index.html"),
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

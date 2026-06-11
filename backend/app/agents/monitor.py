@@ -58,11 +58,11 @@ async def check_positions(account_id: int) -> None:
         return
     guard["running"] = True
     try:
-        account = query_one("SELECT engine FROM accounts WHERE id = ?", (account_id,))
+        account = await asyncio.to_thread(query_one, "SELECT engine FROM accounts WHERE id = ?", (account_id,))
         live_engine = live_engine_for(account["engine"]) if account else None
         if live_engine:
             await live_engine.update_mark_prices(account_id)
-        positions = query_all("SELECT * FROM open_positions WHERE account_id = ?", (account_id,))
+        positions = await asyncio.to_thread(query_all, "SELECT * FROM open_positions WHERE account_id = ?", (account_id,))
 
         for pos in positions:
             try:
@@ -77,8 +77,11 @@ async def check_positions(account_id: int) -> None:
                 new_high = max(prev_high, price)
                 new_low = min(prev_low, price)
 
-                execute("UPDATE open_positions SET mark_price = ?, unrealized_pnl = ?, intra_high = ?, intra_low = ? WHERE id = ?",
-                        (price, unrealized_pnl, new_high, new_low, pos["id"]))
+                await asyncio.to_thread(
+                    execute,
+                    "UPDATE open_positions SET mark_price = ?, unrealized_pnl = ?, intra_high = ?, intra_low = ? WHERE id = ?",
+                    (price, unrealized_pnl, new_high, new_low, pos["id"]),
+                )
                 event_bus.emit("position:updated", {
                     "symbol": pos["symbol"], "side": pos["side"], "unrealizedPnl": unrealized_pnl,
                     "markPrice": price, "accountId": account_id, "positionId": pos["id"],
@@ -114,7 +117,7 @@ async def check_positions(account_id: int) -> None:
 
 
 async def _update_trailing_stop(pos, price: float, account_id: int, live_engine=None) -> None:
-    bot_config = query_one("SELECT * FROM bot_configs WHERE account_id = ?", (account_id,))
+    bot_config = await asyncio.to_thread(query_one, "SELECT * FROM bot_configs WHERE account_id = ?", (account_id,))
     if not bot_config:
         return
     trailing_pcnt = bot_config["trailing_percent"] / 100
@@ -126,9 +129,9 @@ async def _update_trailing_stop(pos, price: float, account_id: int, live_engine=
                 await complete_exchange_operation(
                     live_engine.set_tp_sl(account_id, pos["symbol"], pos["side"], pos["tp_price"], new_sl)
                 )
-                execute("UPDATE open_positions SET trailing_highest = ? WHERE id = ?", (highest, pos["id"]))
+                await asyncio.to_thread(execute, "UPDATE open_positions SET trailing_highest = ? WHERE id = ?", (highest, pos["id"]))
             else:
-                execute("UPDATE open_positions SET trailing_highest = ?, sl_price = ? WHERE id = ?", (highest, new_sl, pos["id"]))
+                await asyncio.to_thread(execute, "UPDATE open_positions SET trailing_highest = ?, sl_price = ? WHERE id = ?", (highest, new_sl, pos["id"]))
             log.info(f"Trailing SL updated: {pos['symbol']} new SL={new_sl:.4f}", {"accountId": account_id})
     else:
         lowest = min(_coalesce(pos["trailing_lowest"], pos["entry_price"]), price)
@@ -138,9 +141,9 @@ async def _update_trailing_stop(pos, price: float, account_id: int, live_engine=
                 await complete_exchange_operation(
                     live_engine.set_tp_sl(account_id, pos["symbol"], pos["side"], pos["tp_price"], new_sl)
                 )
-                execute("UPDATE open_positions SET trailing_lowest = ? WHERE id = ?", (lowest, pos["id"]))
+                await asyncio.to_thread(execute, "UPDATE open_positions SET trailing_lowest = ? WHERE id = ?", (lowest, pos["id"]))
             else:
-                execute("UPDATE open_positions SET trailing_lowest = ?, sl_price = ? WHERE id = ?", (lowest, new_sl, pos["id"]))
+                await asyncio.to_thread(execute, "UPDATE open_positions SET trailing_lowest = ?, sl_price = ? WHERE id = ?", (lowest, new_sl, pos["id"]))
             log.info(f"Trailing SL updated: {pos['symbol']} new SL={new_sl:.4f}", {"accountId": account_id})
 
 
@@ -175,10 +178,10 @@ def is_monitor_running(account_id: int) -> bool:
 
 
 async def _global_tick() -> None:
-    positions = query_all("SELECT * FROM open_positions")
+    positions = await asyncio.to_thread(query_all, "SELECT * FROM open_positions")
     if not positions:
         return
-    account_engines = {r["id"]: r["engine"] for r in query_all("SELECT id, engine FROM accounts")}
+    account_engines = {r["id"]: r["engine"] for r in await asyncio.to_thread(query_all, "SELECT id, engine FROM accounts")}
     symbol_map: dict[str, list] = {}
     for pos in positions:
         pos_engine = account_engines.get(pos["account_id"])
@@ -195,8 +198,11 @@ async def _global_tick() -> None:
                 unrealized_pnl = (price - pos["entry_price"]) * pos["size"] if pos["side"] == "long" else (pos["entry_price"] - price) * pos["size"]
                 new_high = max(_coalesce(pos["intra_high"], pos["entry_price"]), price)
                 new_low = min(_coalesce(pos["intra_low"], pos["entry_price"]), price)
-                execute("UPDATE open_positions SET mark_price = ?, unrealized_pnl = ?, intra_high = ?, intra_low = ? WHERE id = ?",
-                        (price, unrealized_pnl, new_high, new_low, pos["id"]))
+                await asyncio.to_thread(
+                    execute,
+                    "UPDATE open_positions SET mark_price = ?, unrealized_pnl = ?, intra_high = ?, intra_low = ? WHERE id = ?",
+                    (price, unrealized_pnl, new_high, new_low, pos["id"]),
+                )
                 event_bus.emit("position:updated", {
                     "symbol": pos["symbol"], "side": pos["side"], "unrealizedPnl": unrealized_pnl,
                     "markPrice": price, "accountId": pos["account_id"], "positionId": pos["id"],
@@ -297,8 +303,8 @@ def start_realtime_position_stream() -> None:
 
 
 async def take_equity_snapshot(account_id: int) -> None:
-    wallet = query_one("SELECT * FROM paper_wallets WHERE account_id = ?", (account_id,))
-    positions = query_all("SELECT * FROM open_positions WHERE account_id = ?", (account_id,))
+    wallet = await asyncio.to_thread(query_one, "SELECT * FROM paper_wallets WHERE account_id = ?", (account_id,))
+    positions = await asyncio.to_thread(query_all, "SELECT * FROM open_positions WHERE account_id = ?", (account_id,))
     unrealized_pnl = 0.0
     reserved_margin = 0.0
     for pos in positions:
@@ -313,7 +319,7 @@ async def take_equity_snapshot(account_id: int) -> None:
     else:
         # Canli (bybit/demo) hesap: paper_wallet yok -> borsadan equity cek ki
         # drawdown devre kesici (risk.py) icin peak/equity gercekten kayda gecsin.
-        account = query_one("SELECT engine, initial_balance FROM accounts WHERE id = ?", (account_id,))
+        account = await asyncio.to_thread(query_one, "SELECT engine, initial_balance FROM accounts WHERE id = ?", (account_id,))
         live_engine = live_engine_for(account["engine"]) if account else None
         if not live_engine:
             return
@@ -328,8 +334,11 @@ async def take_equity_snapshot(account_id: int) -> None:
             return
         initial_balance = account["initial_balance"] or 0
 
-    peak_row = query_one("SELECT MAX(equity) as peak FROM equity_snapshots WHERE account_id = ?", (account_id,))
+    peak_row = await asyncio.to_thread(query_one, "SELECT MAX(equity) as peak FROM equity_snapshots WHERE account_id = ?", (account_id,))
     peak = max(initial_balance, (peak_row["peak"] if peak_row and peak_row["peak"] else 0), equity)
     drawdown = ((peak - equity) / peak) * 100 if peak > 0 else 0
-    execute("INSERT INTO equity_snapshots (account_id, equity, balance, unrealized_pnl, drawdown) VALUES (?, ?, ?, ?, ?)",
-            (account_id, equity, balance, unrealized_pnl, max(0, drawdown)))
+    await asyncio.to_thread(
+        execute,
+        "INSERT INTO equity_snapshots (account_id, equity, balance, unrealized_pnl, drawdown) VALUES (?, ?, ?, ?, ?)",
+        (account_id, equity, balance, unrealized_pnl, max(0, drawdown)),
+    )

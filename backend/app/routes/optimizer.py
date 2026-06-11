@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from ..db.database import query_one, query_all, execute, transaction
-from ..services.bot_manager import start_bot, stop_bot
+from ..services.bot_manager import start_bot, stop_bot, get_all_bot_statuses
 
 router = APIRouter()
 
@@ -101,13 +101,18 @@ def _result_conds(prefix: str, only_year: bool, hide_junk: bool) -> str:
     if hide_junk:
         c.append(f"{prefix}max_drawdown > 0")
         c.append(f"{prefix}trades >= {JUNK_MIN_TRADES}")
-    return "WHERE " + " AND ".join(c) if c else ""
+    if not c:
+        return ""
+    # Deploy edilmis (CANLI/STOPPED) stratejiler junk/year filtresini ATLAR -> her zaman
+    # gorunur; aksi halde durdurulmus deployed bot tablodan kaybolup STOPPED rozeti gozukmez.
+    # deploy_state ('live'/'stopped') API yeniden kullanilsa bile yapisik kaldigi icin onu kullan.
+    return f"WHERE (({' AND '.join(c)}) OR {prefix}deploy_state IS NOT NULL)"
 
 
 def get_optimizer_results(limit: int = 50, unique: bool = False, only_year: bool = False, hide_junk: bool = False):
     cols = """r.id, r.strategy_name, r.config_json, r.trades, r.wins, r.losses, r.total_pnl, r.win_rate,
              r.profit_factor, r.sharpe_estimate, r.max_drawdown, r.calmar, r.generation, r.tested_at, r.backtest_days,
-             r.deployed_account_id, r.deployed_at, a.id AS live_account_id, a.name AS live_account_name,
+             r.deployed_account_id, r.deployed_at, r.deploy_state, a.id AS live_account_id, a.name AS live_account_name,
              bc.bot_enabled AS live_bot_enabled"""
     if not unique:
         rows = query_all(
@@ -117,7 +122,7 @@ def get_optimizer_results(limit: int = 50, unique: bool = False, only_year: bool
             LEFT JOIN accounts a ON a.id = r.deployed_account_id
             LEFT JOIN bot_configs bc ON bc.account_id = a.id
             {_result_conds('r.', only_year, hide_junk)}
-            ORDER BY r.calmar DESC, r.total_pnl DESC LIMIT ?
+            ORDER BY (r.deploy_state IS NOT NULL) DESC, r.calmar DESC, r.total_pnl DESC LIMIT ?
             """,
             (limit,),
         )
@@ -128,17 +133,17 @@ def get_optimizer_results(limit: int = 50, unique: bool = False, only_year: bool
         FROM optimizer_results r
         LEFT JOIN accounts a ON a.id = r.deployed_account_id
         LEFT JOIN bot_configs bc ON bc.account_id = a.id
-        WHERE r.id IN (
+        WHERE (r.id IN (
           SELECT id FROM (
             SELECT id, ROW_NUMBER() OVER (
               PARTITION BY trades, wins, losses, total_pnl, calmar, max_drawdown
-              ORDER BY (deployed_account_id IS NOT NULL) DESC, generation ASC, id ASC
+              ORDER BY (deploy_state IS NOT NULL) DESC, generation ASC, id ASC
             ) AS rn
             FROM optimizer_results
             {_result_conds('', only_year, hide_junk)}
           ) WHERE rn = 1
-        )
-        ORDER BY r.calmar DESC, r.total_pnl DESC LIMIT ?
+        ) OR r.deploy_state IS NOT NULL)
+        ORDER BY (r.deploy_state IS NOT NULL) DESC, r.calmar DESC, r.total_pnl DESC LIMIT ?
         """,
         (limit,),
     )
@@ -214,10 +219,29 @@ async def results(request: Request):
     q = request.query_params
     rows = get_optimizer_results(300, q.get("unique") != "0", q.get("year") == "1", q.get("junk") != "0")
     idx = _parity_index()
+    # bot_enabled DB bayragi gercek calisma durumunu yansitmaz (sunucu restart / shutdown'da
+    # preserve_enabled / bot baslamamis -> bayrak 1 kalir). CANLI rozeti GERCEK runtime
+    # durumuna gore gosterilsin diye fiilen calisan hesaplari ekle.
+    running_ids = {s["accountId"] for s in get_all_bot_statuses()}
+    # Rozet STRATEJIYE yapisik deploy_state'e gore: 'live' + bagli bot calisiyorsa CANLI;
+    # deploy_state varsa ama calismiyorsa STOPPED (API yeniden kullanilsa bile yapisik kalir);
+    # deploy_state NULL ise rozet yok.
     for r in rows:
         p = idx.get(r["strategy_name"])
         r["leanParity"] = p["verdict"] if p else None
         r["leanParityDetail"] = p
+        state = r.get("deploy_state")
+        acct_running = bool(r.get("deployed_account_id") and r["deployed_account_id"] in running_ids)
+        if state == "live" and acct_running:
+            r["badge"] = "live"
+            r["live_running"] = True
+            r["live_account_id"] = r["deployed_account_id"]
+        elif state in ("live", "stopped"):
+            r["badge"] = "stopped"
+            r["live_running"] = False
+        else:
+            r["badge"] = None
+            r["live_running"] = False
     return rows
 
 
@@ -295,6 +319,40 @@ async def _read_body(request: Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def _reset_account_stats_for_redeploy(account_id: int) -> bool:
+    """Mevcut hesap yeni stratejiye verilirken eski stratejinin kumulatif
+    istatistikleri (total_pnl/trades/win-rate) yeni adin altinda gorunmesin diye
+    hesabi temiz sayfaya dondurur: trade gecmisi eski adla trades_archive'e
+    tasinip temizlenir, equity gecmisi silinir; paper hesapta ayrica cuzdan
+    sifirlanir ve sentetik pozisyonlar silinir. Canli (bybit/demo) hesapta
+    open_positions KORUNUR (borsadaki gercegi yansitir, reconcile yonetir);
+    bakiye zaten borsadan okunur."""
+    acc = query_one("SELECT id, name, type, engine FROM accounts WHERE id = ?", (account_id,))
+    if not acc:
+        return False
+    is_live = acc["type"] == "real" or acc["engine"] in ("bybit", "demo")
+    with transaction() as conn:
+        if not is_live:
+            conn.execute("UPDATE paper_wallets SET balance = initial_balance, total_pnl = 0, total_trades = 0, winning_trades = 0, losing_trades = 0, updated_at = datetime('now') WHERE account_id = ?", (account_id,))
+            conn.execute("DELETE FROM open_positions WHERE account_id = ?", (account_id,))
+        conn.execute("DELETE FROM equity_snapshots WHERE account_id = ?", (account_id,))
+        conn.execute(
+            """
+            INSERT INTO trades_archive
+              (account_name, orig_trade_id, account_id, symbol, side, size, entry_price, exit_price,
+               leverage, pnl, pnl_percent, fee, status, active_rules, signal_score, entry_reason,
+               exit_reason, opened_at, closed_at, duration_seconds)
+            SELECT ?, id, account_id, symbol, side, size, entry_price, exit_price,
+               leverage, pnl, pnl_percent, fee, status, active_rules, signal_score, entry_reason,
+               exit_reason, opened_at, closed_at, duration_seconds
+            FROM trades WHERE account_id = ?
+            """,
+            (acc["name"], account_id),
+        )
+        conn.execute("DELETE FROM trades WHERE account_id = ?", (account_id,))
+    return True
+
+
 @router.post("/apply")
 async def apply(request: Request):
     body = await _read_body(request)
@@ -309,9 +367,9 @@ async def apply(request: Request):
         parsed_result_id = _parse_positive_id(result_id)
         if parsed_result_id is None:
             return JSONResponse(status_code=400, content={"error": "Invalid resultId"})
-        cfg_row = query_one("SELECT strategy_name, config_json FROM optimizer_results WHERE id = ?", (parsed_result_id,))
+        cfg_row = query_one("SELECT id, strategy_name, config_json FROM optimizer_results WHERE id = ?", (parsed_result_id,))
     else:
-        cfg_row = query_one("SELECT strategy_name, config_json FROM optimizer_results ORDER BY calmar DESC LIMIT 1")
+        cfg_row = query_one("SELECT id, strategy_name, config_json FROM optimizer_results ORDER BY calmar DESC LIMIT 1")
     if not cfg_row:
         return JSONResponse(status_code=404, content={"error": "Optimizer result not found"})
 
@@ -323,6 +381,14 @@ async def apply(request: Request):
     enabled_rules = ",".join(c["enabledRules"]) if isinstance(c.get("enabledRules"), list) and c["enabledRules"] else "__none__"
     leverage = max(1, min(125, _to_int(c.get("leverage"), 1) or 1))
     max_positions = max(1, min(100, _to_int(c.get("maxPositions"), 3) or 3))
+
+    # YALNIZ secili bota dokun. Baska botlar (canli olanlar dahil) ETKILENMEZ.
+    # Secili bot zaten calisiyorsa once durdur ki yeni config ile yeniden baslasin
+    # (start_bot, calisan bota yeni config'i yansitmaz).
+    stop_bot(account_id)
+    # Yeni strateji temiz sayfayla baslar; eski stratejinin P&L/trade gecmisi
+    # yeni adin altinda gorunmez (rename'den ONCE: arsiv eski adla etiketlenir).
+    wallet_reset = _reset_account_stats_for_redeploy(account_id)
 
     execute(
         """
@@ -336,7 +402,15 @@ async def apply(request: Request):
     )
     apply_name = (cfg_row["strategy_name"] or "Strateji")[:80]
     execute("UPDATE accounts SET name = ?, updated_at = datetime('now') WHERE id = ?", (apply_name, account_id))
-    return {"success": True, "name": apply_name, "applied": {"enabledRules": enabled_rules, **c, "leverage": leverage, "maxPositions": max_positions}}
+    # Deploy isareti: bu hesaba bagli eski strateji(ler)i temizle, bu sonucu isaretle ->
+    # optimizer tablosunda secili hesap CANLI rozeti alir.
+    execute("UPDATE optimizer_results SET deployed_account_id = NULL, deployed_at = NULL WHERE deployed_account_id = ? AND id != ?", (account_id, cfg_row["id"]))
+    execute("UPDATE optimizer_results SET deployed_account_id = ?, deployed_at = datetime('now') WHERE id = ?", (account_id, cfg_row["id"]))
+    # Secili botu yeni config ile canliya al.
+    started = start_bot(account_id)
+    return {"success": True, "name": apply_name, "started": started["success"], "startError": started.get("error"),
+            "walletReset": wallet_reset,
+            "applied": {"enabledRules": enabled_rules, **c, "leverage": leverage, "maxPositions": max_positions}}
 
 
 @router.post("/deploy")
@@ -372,6 +446,9 @@ async def deploy(request: Request):
             return JSONResponse(status_code=404, content={"error": "Account not found"})
         new_name = (row["strategy_name"] or "Strateji")[:80]
         stop_bot(target_id)
+        # Yeni strateji temiz sayfayla baslar; eski stratejinin P&L/trade gecmisi
+        # yeni adin altinda gorunmez (rename'den ONCE: arsiv eski adla etiketlenir).
+        wallet_reset = _reset_account_stats_for_redeploy(target_id)
         execute(
             """
             UPDATE bot_configs SET enabled_rules = ?, long_min_score = ?, short_min_score = ?, tp_percent = ?, sl_percent = ?,
@@ -383,9 +460,13 @@ async def deploy(request: Request):
              _clamp_pct(c.get("positionSizePct"), 3), max_positions, str(c.get("signalSource") or "all"), target_id),
         )
         execute("UPDATE accounts SET name = ?, updated_at = datetime('now') WHERE id = ?", (new_name, target_id))
-        execute("UPDATE optimizer_results SET deployed_account_id = ?, deployed_at = datetime('now') WHERE id = ?", (target_id, row["id"]))
+        # Bu API'de duran eski strateji(ler): API bagini birak ama deploy_state='stopped' yap ->
+        # STOPPED rozeti API yeniden kullanilsa bile YAPISIK kalir (kaybolmaz).
+        execute("UPDATE optimizer_results SET deployed_account_id = NULL, deploy_state = 'stopped' WHERE deployed_account_id = ? AND id != ?", (target_id, row["id"]))
+        # Bu stratejiyi bu API'ye CANLI bagla.
+        execute("UPDATE optimizer_results SET deployed_account_id = ?, deployed_at = datetime('now'), deploy_state = 'live' WHERE id = ?", (target_id, row["id"]))
         started = start_bot(target_id)
-        return {"success": True, "accountId": target_id, "name": new_name, "started": started["success"], "startError": started.get("error")}
+        return {"success": True, "accountId": target_id, "name": new_name, "started": started["success"], "startError": started.get("error"), "walletReset": wallet_reset}
 
     name = ("Canli: " + (row["strategy_name"] or "Strateji"))[:80]
 
@@ -404,7 +485,52 @@ async def deploy(request: Request):
              _clamp_pct(c.get("tpPercent"), 5), _clamp_pct(c.get("slPercent"), 3), str(c.get("signalSource") or "all"), _clamp_pct(c.get("positionSizePct"), 3), enabled_rules),
         )
         conn.execute("INSERT INTO paper_wallets (account_id, balance, initial_balance) VALUES (?, 10000, 10000)", (account_id,))
-        conn.execute("UPDATE optimizer_results SET deployed_account_id = ?, deployed_at = datetime('now') WHERE id = ?", (account_id, row["id"]))
+        conn.execute("UPDATE optimizer_results SET deployed_account_id = ?, deployed_at = datetime('now'), deploy_state = 'live' WHERE id = ?", (account_id, row["id"]))
 
     started = start_bot(account_id)
     return {"success": True, "accountId": account_id, "name": name, "started": started["success"], "startError": started.get("error")}
+
+
+@router.post("/stop-strategy")
+async def stop_strategy(request: Request):
+    """Stratejiyi durdur: uzerinde calistigi bot(lar)i durdurur -> Bybit API bosa cikar,
+    satir STOPPED gosterir. Deploy isareti KORUNUR (hesap yeniden kullanilana kadar STOPPED)."""
+    body = await _read_body(request)
+    rid = _parse_positive_id(body.get("resultId"))
+    if rid is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid resultId"})
+    row = query_one("SELECT id, strategy_name, deployed_account_id FROM optimizer_results WHERE id = ?", (rid,))
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Optimizer result not found"})
+    # Bu stratejiyi calistiran hesaplar: deploy isareti + ayni isimli hesaplar (apply/deploy
+    # hesabi strateji adiyla adlandirir).
+    ids = {a["id"] for a in query_all("SELECT id FROM accounts WHERE name = ?", (row["strategy_name"],))}
+    if row["deployed_account_id"]:
+        ids.add(row["deployed_account_id"])
+    running = {s["accountId"] for s in get_all_bot_statuses()}
+    stopped = [aid for aid in ids if aid in running]
+    for aid in stopped:
+        stop_bot(aid)
+    # Strateji STOPPED kalsin (API bagini koru ki acct_running=False -> STOPPED).
+    execute("UPDATE optimizer_results SET deploy_state = 'stopped' WHERE id = ?", (rid,))
+    return {"success": True, "stopped": stopped}
+
+
+@router.get("/free-accounts")
+async def free_accounts():
+    """Canliya Al icin: Bybit API'si olan (demo/bybit) hesaplar + calisip calismadigi.
+    Frontend 'bosta' (running=False) olanlari secime sunar."""
+    running = {s["accountId"] for s in get_all_bot_statuses()}
+    rows = query_all(
+        """
+        SELECT id, name, engine,
+          CASE WHEN api_key IS NOT NULL AND api_secret IS NOT NULL THEN 1 ELSE 0 END AS has_creds
+        FROM accounts WHERE engine IN ('demo', 'bybit')
+        ORDER BY id ASC
+        """
+    )
+    return [
+        {"id": r["id"], "name": r["name"], "engine": r["engine"],
+         "hasCredentials": bool(r["has_creds"]), "running": r["id"] in running}
+        for r in rows
+    ]

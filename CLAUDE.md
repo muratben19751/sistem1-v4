@@ -90,3 +90,18 @@ cd frontend && npm run dev   # dev modu (vite 5200 -> proxy 3500)
 ```
 
 Opsiyonel kalan stub'lar: chat route ve Bybit private/public WebSocket transportu. Canli emir yolu REST fallback kullanir.
+
+## Surec yonetimi (pm2 watchdog)
+- Backend'i **pm2 daemon'i** yonetir (`sistem1-v4`, fork mode): uvicorn oldurulurse pm2 saniyeler icinde
+  yeniden baslatir. pm2 PATH'te DEGIL; yerel kurulumdan cagrilir:
+  `node C:\myAI_Projects\sistem1\node_modules\pm2\bin\pm2 list|restart sistem1-v4|logs sistem1-v4`
+- Kod degisikligini canliya almak icin uvicorn process'ini oldurmek yeterli (pm2 yeni kodla acar)
+  ya da `pm2 restart sistem1-v4`.
+- Optimizer process'i (`python -m app.optimizer_main`) pm2'de KAYITLI DEGIL; elle baslatilir, watchdog'u yok.
+- DIKKAT: eski `sistem1` (v1) uygulamasi da IPv6 `::`:3500'u dinler -> tarayicida her zaman
+  `127.0.0.1:3500` kullan, `localhost:3500` yanlis uygulamaya gidebilir.
+
+## Bakim
+- `services/db_maintenance.py`: gunluk budama — bot_logs 14g, telegram_ingest_events 90g, alerts 430g,
+  kline_cache icin mevcut `prune_kline_cache` (400g + stale) yeniden kosulur. equity_snapshots BILEREK
+  budanmaz (max-drawdown peak'i tum gecmisten hesaplanir). Pencereler `DB_KEEP_*` env'leriyle ayarlanir.

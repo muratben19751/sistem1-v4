@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccountStore } from '../store/account-store';
 import { useBacktestStore, type OptimizerResultRow } from '../store/backtest-store';
@@ -169,12 +169,14 @@ function ManualBacktest() {
 }
 
 export function OptimizerLab() {
-  const { optStatus, optStats, optResults, optInsights, optLog, optUnique, setOptUnique, optOnlyYear, setOptOnlyYear, optHideJunk, setOptHideJunk, fetchOptimizer, startOptimizer, stopOptimizer, applyConfig, deployConfig, pushOptLog } = useBacktestStore();
-  const { accounts, fetchAccounts } = useAccountStore();
+  const { optStatus, optStats, optResults, optInsights, optLog, optUnique, setOptUnique, optOnlyYear, setOptOnlyYear, optHideJunk, setOptHideJunk, fetchOptimizer, startOptimizer, stopOptimizer, deployConfig, stopStrategy, fetchFreeAccounts, pushOptLog } = useBacktestStore();
+  const { fetchAccounts } = useAccountStore();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<OptimizerResultRow | null>(null);
-  const [applyAcc, setApplyAcc] = useState<number | null>(null);
+  const [freeAccounts, setFreeAccounts] = useState<Array<{ id: number; name: string; engine: string; hasCredentials: boolean; running: boolean }>>([]);
+  const [pickedAccount, setPickedAccount] = useState<number | null>(null);
   const [applyMsg, setApplyMsg] = useState('');
+  const [busy, setBusy] = useState(false);
   const [sortKey, setSortKey] = useState<keyof OptimizerResultRow | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const toggleSort = (key: keyof OptimizerResultRow) => {
@@ -201,6 +203,21 @@ export function OptimizerLab() {
 
   const running = optStatus?.running;
   const cfg = useMemo(() => { try { return selected ? JSON.parse(selected.config_json) : null; } catch { return null; } }, [selected]);
+
+  // Secili strateji canli mi? (deploy_state tabanli rozet)
+  const selLive = selected != null && selected.badge === 'live';
+
+  // Bosta API havuzunu yukle (sadece running===false olanlar gosterilir)
+  const loadFreeAccounts = useCallback(async () => {
+    try { setFreeAccounts(await fetchFreeAccounts()); } catch { /* ignore */ }
+  }, [fetchFreeAccounts]);
+
+  // detay paneli acildiginda / secili strateji degistiginde bos hesaplari tazele
+  useEffect(() => {
+    setPickedAccount(null);
+    setApplyMsg('');
+    if (selected) loadFreeAccounts();
+  }, [selected?.id, loadFreeAccounts]);
 
   return (
     <div className="p-3 space-y-3 overflow-y-auto">
@@ -268,8 +285,11 @@ export function OptimizerLab() {
                 {optResults.length === 0 ? (
                   <tr><td colSpan={13} className="text-center text-ink-600 py-6 text-[11px]">Henuz sonuc yok. "Baslat"a bas.</td></tr>
                 ) : sortedResults.map((r, i) => {
-                  const live = r.live_account_id != null && !!r.live_bot_enabled;
-                  const stopped = !live && r.deployed_account_id != null;
+                  // CANLI = bot FIILEN calisiyor (live_running). bot_enabled DB bayragi degil;
+                  // durdurulmus ama bayragi 1 kalmis stratejiler STOPPED gosterilsin.
+                  // live_running yoksa (eski backend) bot_enabled'a dus -> deploy sirasina dayanikli.
+                  const live = r.badge === 'live';
+                  const stopped = r.badge === 'stopped';
                   const rowTitle = live
                     ? `Canli: ${r.live_account_name} (#${r.live_account_id})`
                     : stopped
@@ -351,21 +371,51 @@ export function OptimizerLab() {
                 </div>
               ) : null}
               <div className="flex items-center gap-2 pt-1">
-                <select value={applyAcc ?? ''} onChange={(e) => setApplyAcc(e.target.value === '' ? null : Number(e.target.value))} className="h-7 bg-ink-800 border border-white/10 px-2 text-[10px] text-ink-100 outline-none">
-                  <option value="">demo hesap sec...</option>
-                  {accounts.filter((a) => a.engine === 'demo').map((a) => <option key={a.id} value={a.id}>{a.name}{a.bot_enabled === 1 ? ' (calisiyor)' : ''}</option>)}
-                </select>
-                <button
-                  disabled={applyAcc == null || !selected}
-                  onClick={async () => { setApplyMsg(''); try { await applyConfig(applyAcc!, selected!.id); setApplyMsg('Uygulandi ✓'); } catch (e: any) { setApplyMsg('Hata: ' + (e?.message || '')); } }}
-                  className="h-7 px-3 text-[10px] bg-up/20 border border-up/40 text-up disabled:opacity-40"
-                >Bota Uygula</button>
-                <button
-                  disabled={!selected || applyAcc == null}
-                  onClick={async () => { setApplyMsg(''); try { const r = await deployConfig(selected!.id, applyAcc!); await fetchAccounts(); await fetchOptimizer(); setApplyMsg(`Canliya alindi: ${r.name} (#${r.accountId})${r.started ? ' ✓' : ''}`); } catch (e: any) { setApplyMsg('Hata: ' + (e?.message || '')); } }}
-                  className="h-7 px-3 text-[10px] bg-info/20 border border-info/40 text-info disabled:opacity-40"
-                  title="Secili bos demo hesabina uygula + baslat"
-                >Canliya Al</button>
+                {selLive ? (
+                  <button
+                    disabled={busy || !selected}
+                    onClick={async () => {
+                      if (!selected) return;
+                      setBusy(true); setApplyMsg('');
+                      try {
+                        const r = await stopStrategy(selected.id);
+                        await fetchAccounts(); await fetchOptimizer(); await loadFreeAccounts();
+                        setApplyMsg(r.stopped?.length ? `Durduruldu (${r.stopped.length} bot)` : 'Durduruldu');
+                      } catch (e: any) { setApplyMsg('Hata: ' + (e?.message || '')); }
+                      finally { setBusy(false); }
+                    }}
+                    className="h-7 px-3 text-[10px] bg-down/20 border border-down/40 text-down disabled:opacity-40"
+                    title="Bu stratejiyi calistiran botu durdur (Bybit API serbest kalir)"
+                  >⏹ Durdur</button>
+                ) : (
+                  <>
+                    <select
+                      value={pickedAccount ?? ''}
+                      onChange={(e) => setPickedAccount(e.target.value === '' ? null : Number(e.target.value))}
+                      className="h-7 bg-ink-800 border border-white/10 px-2 text-[10px] text-ink-100 outline-none"
+                    >
+                      <option value="">bosta API sec...</option>
+                      {freeAccounts.filter((a) => a.running === false).map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}{a.hasCredentials ? '' : ' (API yok)'}</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={busy || pickedAccount == null || !selected}
+                      onClick={async () => {
+                        if (!selected || pickedAccount == null) return;
+                        setBusy(true); setApplyMsg('');
+                        try {
+                          const r = await deployConfig(selected.id, pickedAccount);
+                          await fetchAccounts(); await fetchOptimizer(); await loadFreeAccounts();
+                          setApplyMsg(`Canliya alindi: ${r.name}${r.started ? ' ✓' : ' (baslamadi)'}`);
+                        } catch (e: any) { setApplyMsg('Hata: ' + (e?.message || '')); }
+                        finally { setBusy(false); }
+                      }}
+                      className="h-7 px-3 text-[10px] bg-up/20 border border-up/40 text-up disabled:opacity-40"
+                      title="Secili bos Bybit API hesabina uygula + baslat. Hesabin eski strateji istatistikleri sifirlanir (trade gecmisi arsive tasinir)"
+                    >▶ Canliya Al</button>
+                  </>
+                )}
                 {applyMsg && <span className="text-[10px] text-ink-300">{applyMsg}</span>}
               </div>
             </div>

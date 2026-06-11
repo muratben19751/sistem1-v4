@@ -4,6 +4,7 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from ..core.errors import public_error
 from ..db.database import query_one
 from ..engines.registry import get_engine
 from ..engines.trade_engine import OrderParams
@@ -218,7 +219,7 @@ async def place_order(request: Request):
             return JSONResponse(status_code=400, content=payload)
         return payload
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "trading")})
 
 
 @router.post("/close")
@@ -250,7 +251,7 @@ async def close_order(request: Request):
             return JSONResponse(status_code=400, content=payload)
         return payload
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "trading")})
 
 
 @router.get("/balance/{account_id}")
@@ -265,7 +266,7 @@ async def get_balance(account_id: str):
         balance = await engine.get_balance(uid)
         return _balance_dict(balance)
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "trading")})
 
 
 @router.post("/tp-sl")
@@ -305,7 +306,7 @@ async def set_tp_sl(request: Request):
         )
         return {"success": True}
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "trading")})
 
 
 @router.post("/update-prices/{account_id}")
@@ -320,4 +321,4 @@ async def update_prices(account_id: str):
         await engine.update_mark_prices(uid)
         return {"success": True}
     except Exception as err:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "trading")})

@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from ..core.errors import public_error
 from ..db.database import query_one, query_all, execute
 from ..engines.backtest_engine import run_backtest
 from ..services.alert_signals import get_source_types
@@ -234,7 +235,7 @@ async def run(request: Request):
         return {**result, "config": built["cfg"], "accountName": built["accountName"]}
     except Exception as err:  # noqa: BLE001
         log.error(f"Backtest failed: {err}")
-        return JSONResponse(status_code=500, content={"error": str(err)})
+        return JSONResponse(status_code=500, content={"error": public_error(err, "backtest")})
 
 
 @router.get("/runs")

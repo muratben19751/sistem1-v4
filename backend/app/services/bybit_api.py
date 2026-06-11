@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import time
 from dataclasses import dataclass
 
@@ -22,6 +23,7 @@ TICKER_CACHE_TTL = max(5000, int(os.environ.get("BYBIT_TICKER_CACHE_TTL_MS") or 
 KLINE_CACHE_TTL = max(5000, int(os.environ.get("BYBIT_KLINE_CACHE_TTL_MS") or 30000))
 FUNDING_HISTORY_CACHE_TTL = max(10000, int(os.environ.get("BYBIT_FUNDING_HISTORY_CACHE_TTL_MS") or 300000))
 VALID_SYMBOLS_CACHE_TTL = max(60000, int(os.environ.get("BYBIT_VALID_SYMBOLS_CACHE_TTL_MS") or 6 * 60 * 60 * 1000))
+RISK_LIMIT_CACHE_TTL = max(60000, int(os.environ.get("BYBIT_RISK_LIMIT_CACHE_TTL_MS") or 6 * 60 * 60 * 1000))
 OI_CHANGE_CACHE_TTL = max(10000, int(os.environ.get("BYBIT_OI_CHANGE_CACHE_TTL_MS") or 180000))
 
 
@@ -104,13 +106,19 @@ def _is_invalid_symbol_msg(msg: str | None) -> bool:
     return "symbol invalid" in m or "invalid symbol" in m or "params error" in m
 
 
+def _jittered(backoff_ms: float) -> float:
+    # Jitter: kesinti sonrasi tum bekleyen isteklerin ayni anda retry etmesini
+    # (senkronize dalga) kirar.
+    return backoff_ms * random.uniform(0.8, 1.2)
+
+
 async def request(endpoint: str, params: dict | None = None, retries: int = 0):
     await _rate_limit()
     try:
         res = await _get_client().get(f"{BASE_URL}{endpoint}", params=params or {})
     except (httpx.TimeoutException, httpx.NetworkError) as err:
         if retries < 2:
-            backoff = 1500 * (retries + 1)
+            backoff = _jittered(1500 * (retries + 1))
             _apply_cooldown(backoff)
             await asyncio.sleep(backoff / 1000.0)
             return await request(endpoint, params, retries + 1)
@@ -118,7 +126,7 @@ async def request(endpoint: str, params: dict | None = None, retries: int = 0):
 
     if res.status_code != 200:
         if res.status_code == 429 and retries < 3:
-            backoff = 5000 * (retries + 1)
+            backoff = _jittered(5000 * (retries + 1))
             _apply_cooldown(backoff)
             await asyncio.sleep(backoff / 1000.0)
             return await request(endpoint, params, retries + 1)
@@ -127,7 +135,7 @@ async def request(endpoint: str, params: dict | None = None, retries: int = 0):
     data = res.json()
     if data.get("retCode") != 0:
         if _is_rate_limit_msg(data.get("retMsg")) and retries < 3:
-            backoff = 5000 * (retries + 1)
+            backoff = _jittered(5000 * (retries + 1))
             _apply_cooldown(backoff)
             await asyncio.sleep(backoff / 1000.0)
             return await request(endpoint, params, retries + 1)
@@ -196,6 +204,7 @@ async def get_instrument_cache() -> dict:
                 "symbol": symbol,
                 "minOrderQty": to_finite(lot.get("minOrderQty")),
                 "maxOrderQty": to_finite(lot.get("maxOrderQty")),
+                "maxMktOrderQty": to_finite(lot.get("maxMktOrderQty")),
                 "qtyStep": to_finite(lot.get("qtyStep")),
                 "minNotionalValue": to_finite(lot.get("minNotionalValue")),
                 "tickSize": to_finite(price.get("tickSize")),
@@ -209,6 +218,33 @@ async def get_instrument_cache() -> dict:
 
 async def get_tradable_linear_symbols() -> set[str]:
     return (await get_instrument_cache())["symbols"]
+
+
+_risk_limit_cache: dict[str, dict] = {}
+
+
+async def get_max_position_notional(symbol: str, leverage: float) -> float:
+    """Verilen kaldiracta izin verilen maksimum pozisyon degeri (USDT).
+    Bybit risk-limit kademeleri: dusuk kademe yuksek kaldiraca izin verir ama
+    pozisyon degerini sinirlar. Kademelerden maxLeverage >= leverage olanlarin
+    en buyuk riskLimitValue'su doner; bilinemezse 0 (cap uygulanmaz)."""
+    normalized = normalize_symbol(symbol)
+    if not normalized:
+        return 0.0
+    cached = _risk_limit_cache.get(normalized)
+    if not cached or _now() - cached["at"] >= RISK_LIMIT_CACHE_TTL:
+        result = await request("/v5/market/risk-limit", {"category": "linear", "symbol": normalized})
+        tiers = [
+            {"riskLimitValue": to_finite(item.get("riskLimitValue")),
+             "maxLeverage": to_finite(item.get("maxLeverage"))}
+            for item in result.get("list") or []
+        ]
+        cached = {"tiers": tiers, "at": _now()}
+        _risk_limit_cache[normalized] = cached
+    lev = leverage if leverage and leverage > 0 else 1
+    eligible = [t["riskLimitValue"] for t in cached["tiers"]
+                if t["maxLeverage"] >= lev and t["riskLimitValue"] > 0]
+    return max(eligible) if eligible else 0.0
 
 
 async def get_instrument_meta(symbol: str) -> dict | None:

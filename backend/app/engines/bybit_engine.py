@@ -15,7 +15,7 @@ from ..core.logger import create_logger
 from ..core.secrets import decrypt_secret
 from ..core.time import parse_db_time_ms
 from ..db.database import get_db, query_one, query_all, execute, transaction
-from ..services.bybit_api import get_instrument_meta, get_last_price, is_tradable_linear_symbol
+from ..services.bybit_api import get_instrument_meta, get_last_price, get_max_position_notional, is_tradable_linear_symbol
 from ..services.bybit_ws import (
     get_bybit_ws_positions,
     prepare_bybit_private_ws,
@@ -183,18 +183,40 @@ def _normalize_qty(size: float, price: float, meta: dict):
         return {"error": f"Order size is below qty step for {meta['symbol']}"}
     if meta["minOrderQty"] > 0 and qty < meta["minOrderQty"]:
         return {"error": f"Order size below min qty {meta['minOrderQty']} for {meta['symbol']}"}
+    # Tum emirler Market gider; Bybit'in market emri tavani (maxMktOrderQty) limit
+    # tavanindan (maxOrderQty) cok daha dusuk. Asarsa reddetme, tavana kirp ->
+    # dusuk fiyatli coinlerde pozisyon kucultulerek acilir (10001 retry dongusu biter).
+    clamped_from = None
+    max_mkt = meta.get("maxMktOrderQty") or 0
+    if max_mkt > 0 and qty > max_mkt:
+        clamped_from = qty
+        qty = _floor_to_step(max_mkt, meta["qtyStep"])
     if meta["maxOrderQty"] > 0 and qty > meta["maxOrderQty"]:
         return {"error": f"Order size above max qty {meta['maxOrderQty']} for {meta['symbol']}"}
     notional = qty * price
     if meta["minNotionalValue"] > 0 and notional < meta["minNotionalValue"]:
         return {"error": f"Order notional ${notional:.2f} below min ${meta['minNotionalValue']} for {meta['symbol']}"}
-    return {"qty": _format_stepped(qty, meta["qtyStep"]), "numeric": qty}
+    return {"qty": _format_stepped(qty, meta["qtyStep"]), "numeric": qty, "clampedFrom": clamped_from}
 
 
 def _format_order_price(price: float, meta: dict) -> str:
     if meta["tickSize"] > 0:
         return _format_stepped(_round_to_step(price, meta["tickSize"]), meta["tickSize"])
     return _format_bybit_price(price)
+
+
+def _tpsl_from_price(params, side: str, base_price: float) -> tuple[float | None, float | None]:
+    """TP/SL percent MARGIN ROI olarak yorumlanir; gereken fiyat hareketi = pct / leverage."""
+    lev = params.leverage if params.leverage > 0 else 1
+    tp_price = None
+    sl_price = None
+    if params.tp_percent and base_price > 0:
+        pct = params.tp_percent / lev / 100
+        tp_price = base_price * (1 + pct) if side == "long" else base_price * (1 - pct)
+    if params.sl_percent and base_price > 0:
+        pct = params.sl_percent / lev / 100
+        sl_price = base_price * (1 - pct) if side == "long" else base_price * (1 + pct)
+    return tp_price, sl_price
 
 
 def _parse_float(v) -> float:
@@ -860,9 +882,34 @@ class BybitEngine(TradeEngine):
                 tp_price = None
                 sl_price = None
                 last_price = await get_last_price(symbol)
-                normalized_qty = _normalize_qty(params.size, last_price, meta)
+
+                # Risk-limit kademesi: secilen kaldiracta izin verilen maksimum pozisyon
+                # degerini asan emir borsadan "adjust your leverage" (110xx) ile doner.
+                # Notional'i kademe sinirina (kucuk emniyet payiyla) kapat.
+                size = params.size
+                if last_price > 0:
+                    try:
+                        max_notional = await get_max_position_notional(symbol, params.leverage)
+                    except Exception as err:  # noqa: BLE001
+                        max_notional = 0.0
+                        log.warn(f"Risk-limit info unavailable for {symbol}; skipping notional cap: {err}",
+                                 {"accountId": account_id})
+                    allowed = max_notional * 0.98  # market fill kaymasina pay birak
+                    if max_notional > 0 and size * last_price > allowed:
+                        capped = allowed / last_price
+                        log.warn(f"Order size capped by risk-limit tier for {symbol} at {params.leverage}x: "
+                                 f"{size} -> {capped}", {"accountId": account_id})
+                        size = capped
+
+                normalized_qty = _normalize_qty(size, last_price, meta)
                 if "error" in normalized_qty:
                     return OrderResult(success=False, error=normalized_qty["error"])
+                if normalized_qty.get("clampedFrom"):
+                    log.warn(
+                        f"Order qty clamped to exchange market max for {symbol}: "
+                        f"{normalized_qty['clampedFrom']} -> {normalized_qty['numeric']}",
+                        {"accountId": account_id},
+                    )
 
                 order_params = {
                     "category": "linear",
@@ -873,18 +920,10 @@ class BybitEngine(TradeEngine):
                     "timeInForce": "IOC",
                 }
 
-                # TP/SL percent interpreted as MARGIN ROI; required price move = TP% / leverage.
-                lev = params.leverage if params.leverage > 0 else 1
-                if params.tp_percent or params.sl_percent:
-                    if params.tp_percent and last_price > 0:
-                        price_pct = params.tp_percent / lev / 100
-                        tp_price = last_price * (1 + price_pct) if side == "long" else last_price * (1 - price_pct)
-                        order_params["takeProfit"] = _format_order_price(tp_price, meta)
-                    if params.sl_percent and last_price > 0:
-                        price_pct = params.sl_percent / lev / 100
-                        sl_price = last_price * (1 - price_pct) if side == "long" else last_price * (1 + price_pct)
-                        order_params["stopLoss"] = _format_order_price(sl_price, meta)
-
+                # TP/SL emir parametresinde GONDERILMEZ: sinyal fiyatindan hesaplanan dar
+                # TP/SL, emir borsaya ulasana kadar fiyat kipirdayinca "should be
+                # higher/lower than base_price" (10001) ile TUM girisi oldurur. Bunun
+                # yerine fill sonrasi gercek fiyattan hesaplanip trading-stop ile set edilir.
                 order_link_id = _make_order_link_id("open", account_id)
                 pending_order_link_id = order_link_id
                 order_params["orderLinkId"] = order_link_id
@@ -918,6 +957,16 @@ class BybitEngine(TradeEngine):
                 _update_exchange_order(order_link_id, status="filled", exchange_order_id=fill["orderId"],
                                        filled_qty=filled_qty, avg_price=fill_price, fee=fee)
 
+                # TP/SL gercek fill fiyatindan; borsaya set edilemese bile pozisyon DB'de
+                # tp/sl ile kayitli kalir ve lokal monitor uygular.
+                tp_price, sl_price = _tpsl_from_price(params, side, fill_price)
+                if tp_price or sl_price:
+                    try:
+                        await self._apply_position_tpsl(creds, symbol, side, meta, tp_price, sl_price)
+                    except Exception as err:  # noqa: BLE001
+                        log.warn(f"Exchange TP/SL set failed for {symbol}; local monitor will enforce: {err}",
+                                 {"accountId": account_id})
+
                 entry_reason = params.entry_reason if params.entry_reason is not None else "bot_signal"
                 with transaction() as conn:
                     cur = conn.execute(
@@ -932,10 +981,17 @@ class BybitEngine(TradeEngine):
                     trade_id = cur.lastrowid
                     _bc = query_one("SELECT trailing_stop FROM bot_configs WHERE account_id = ?", (account_id,))
                     _trailing = 1 if (_bc and _bc["trailing_stop"]) else 0
+                    # Upsert: reconcile dongusu pozisyonu bizden once import etmis olabilir
+                    # (UNIQUE yarisinda emir borsada dolmusken "Order failed" gorunuyordu).
                     conn.execute(
                         """
                         INSERT INTO open_positions (account_id, symbol, side, size, entry_price, mark_price, leverage, tp_price, sl_price, trailing_stop, trailing_highest, trailing_lowest)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(account_id, symbol, side) DO UPDATE SET
+                          size = excluded.size, entry_price = excluded.entry_price, mark_price = excluded.mark_price,
+                          leverage = excluded.leverage, tp_price = excluded.tp_price, sl_price = excluded.sl_price,
+                          trailing_stop = excluded.trailing_stop, trailing_highest = excluded.trailing_highest,
+                          trailing_lowest = excluded.trailing_lowest
                         """,
                         (account_id, symbol, side, filled_qty, fill_price, fill_price, params.leverage, tp_price, sl_price,
                          _trailing, fill_price if (_trailing and side == "long") else None, fill_price if (_trailing and side == "short") else None),
@@ -955,8 +1011,7 @@ class BybitEngine(TradeEngine):
                         and _is_duplicate_order_error(err)):
                     try:
                         recovered = await self._recover_filled_open(
-                            account_id, creds, symbol, side, params,
-                            tp_price, sl_price, pending_order_link_id,
+                            account_id, creds, symbol, side, params, meta, pending_order_link_id,
                         )
                     except Exception as rec_err:  # noqa: BLE001
                         recovered = None
@@ -972,8 +1027,19 @@ class BybitEngine(TradeEngine):
                 log.error(f"Order failed: {symbol} - {err}", {"accountId": account_id})
                 return OrderResult(success=False, error=str(err))
 
+    async def _apply_position_tpsl(self, creds, symbol: str, side: str, meta: dict,
+                                   tp_price: float | None, sl_price: float | None) -> None:
+        """Fill sonrasi pozisyona TP/SL set eder (tum pozisyon icin, trading-stop)."""
+        body = {"category": "linear", "symbol": symbol, "tpslMode": "Full",
+                "positionIdx": _position_idx_for_side(side)}
+        if tp_price:
+            body["takeProfit"] = _format_order_price(tp_price, meta)
+        if sl_price:
+            body["stopLoss"] = _format_order_price(sl_price, meta)
+        await _private_request(self.base_url, creds, "POST", "/v5/position/trading-stop", body)
+
     async def _recover_filled_open(self, account_id, creds, symbol, side, params,
-                                   tp_price, sl_price, order_link_id):
+                                   meta, order_link_id):
         """Duplicate-order hatasinda: emir gercekte doldu mu? Dolduysa kaydet, yoksa None."""
         fill = await _confirm_order_fill(self.base_url, self.private_ws_url, account_id, creds, symbol, None, order_link_id)
         if not fill:
@@ -996,6 +1062,13 @@ class BybitEngine(TradeEngine):
         fee = fill["fee"]
         _update_exchange_order(order_link_id, status="filled", exchange_order_id=fill["orderId"],
                                filled_qty=filled_qty, avg_price=fill_price, fee=fee)
+        tp_price, sl_price = _tpsl_from_price(params, side, fill_price)
+        if tp_price or sl_price:
+            try:
+                await self._apply_position_tpsl(creds, symbol, side, meta, tp_price, sl_price)
+            except Exception as err:  # noqa: BLE001
+                log.warn(f"Exchange TP/SL set failed for {symbol} (recovery); local monitor will enforce: {err}",
+                         {"accountId": account_id})
         entry_reason = params.entry_reason if params.entry_reason is not None else "bot_signal"
         with transaction() as conn:
             cur = conn.execute(
@@ -1014,6 +1087,11 @@ class BybitEngine(TradeEngine):
                 """
                 INSERT INTO open_positions (account_id, symbol, side, size, entry_price, mark_price, leverage, tp_price, sl_price, trailing_stop, trailing_highest, trailing_lowest)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, symbol, side) DO UPDATE SET
+                  size = excluded.size, entry_price = excluded.entry_price, mark_price = excluded.mark_price,
+                  leverage = excluded.leverage, tp_price = excluded.tp_price, sl_price = excluded.sl_price,
+                  trailing_stop = excluded.trailing_stop, trailing_highest = excluded.trailing_highest,
+                  trailing_lowest = excluded.trailing_lowest
                 """,
                 (account_id, symbol, side, filled_qty, fill_price, fill_price, params.leverage, tp_price, sl_price,
                  _trailing, fill_price if (_trailing and side == "long") else None, fill_price if (_trailing and side == "short") else None),
