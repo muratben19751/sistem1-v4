@@ -11,20 +11,21 @@ import { useIsPhone } from './hooks/useMediaQuery';
 import MobileRedirect from './mobile/MobileRedirect';
 import { Smartphone } from 'lucide-react';
 import ChatBox from './components/ChatBox';
+import { lazyImport } from './lib/lazy-retry';
 
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Bot = lazy(() => import('./pages/Bot'));
-const SettingsPage = lazy(() => import('./pages/SettingsPage'));
-const TradeDetail = lazy(() => import('./pages/TradeDetail'));
-const Charts = lazy(() => import('./pages/Charts'));
-const Journal = lazy(() => import('./pages/Journal'));
-const Backtest = lazy(() => import('./pages/Backtest'));
-const OptimizerLab = lazy(() => import('./pages/OptimizerLab'));
-const BotConfig = lazy(() => import('./pages/BotConfig'));
-const BotOverview = lazy(() => import('./pages/BotOverview'));
-const ReplicaCompare = lazy(() => import('./pages/ReplicaCompare'));
-const LeanOracle = lazy(() => import('./pages/LeanOracle'));
-const MobileApp = lazy(() => import('./mobile/MobileApp'));
+const Dashboard = lazy(lazyImport(() => import('./pages/Dashboard')));
+const Bot = lazy(lazyImport(() => import('./pages/Bot')));
+const SettingsPage = lazy(lazyImport(() => import('./pages/SettingsPage')));
+const TradeDetail = lazy(lazyImport(() => import('./pages/TradeDetail')));
+const Charts = lazy(lazyImport(() => import('./pages/Charts')));
+const Journal = lazy(lazyImport(() => import('./pages/Journal')));
+const Backtest = lazy(lazyImport(() => import('./pages/Backtest')));
+const OptimizerLab = lazy(lazyImport(() => import('./pages/OptimizerLab')));
+const BotConfig = lazy(lazyImport(() => import('./pages/BotConfig')));
+const BotOverview = lazy(lazyImport(() => import('./pages/BotOverview')));
+const ReplicaCompare = lazy(lazyImport(() => import('./pages/ReplicaCompare')));
+const LeanOracle = lazy(lazyImport(() => import('./pages/LeanOracle')));
+const MobileApp = lazy(lazyImport(() => import('./mobile/MobileApp')));
 
 function AuthPrompt() {
   const [visible, setVisible] = useState(false);
