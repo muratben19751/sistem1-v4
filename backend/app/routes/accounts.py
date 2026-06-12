@@ -561,6 +561,12 @@ async def request_demo_funds(id: str, request: Request):
     coin = body.get("coin") if isinstance(body.get("coin"), str) else "USDT"
     amount = body.get("amount")
     amount_str = amount if isinstance(amount, str) else str(amount if amount is not None else "100000")
+    # Bybit demo-funds ondalikli tutari SESSIZCE reddediyor (basari doner, para gelmez);
+    # tam sayiya yukari yuvarla.
+    try:
+        amount_str = str(int(math.ceil(float(amount_str))))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "Invalid amount"})
     try:
         await engine.request_demo_funds(account_id, coin, amount_str)
         return {"success": True}
