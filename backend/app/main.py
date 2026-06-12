@@ -70,6 +70,7 @@ from .routes.chat import router as chat_router
 from .routes.rule_labels import router as rule_labels_router
 from .routes.replica_compare import router as replica_compare_router
 from .routes.replica_tuner import router as replica_tuner_router
+from .routes.strategy_report import router as strategy_report_router
 from .routes.lean_oracle import router as lean_oracle_router
 
 log = create_logger("server")
@@ -300,6 +301,7 @@ app.include_router(chat_router, prefix="/api/chat", dependencies=_auth)
 app.include_router(rule_labels_router, prefix="/api/rule-labels", dependencies=_auth)
 app.include_router(replica_compare_router, prefix="/api/replica-compare", dependencies=_auth)
 app.include_router(replica_tuner_router, prefix="/api/replica-tuner", dependencies=_auth)
+app.include_router(strategy_report_router, prefix="/api/strategy-report", dependencies=_auth)
 app.include_router(lean_oracle_router, prefix="/api/lean-oracle", dependencies=_auth)
 
 _DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

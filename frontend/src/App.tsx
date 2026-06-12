@@ -25,6 +25,7 @@ const BotConfig = lazy(lazyImport(() => import('./pages/BotConfig')));
 const BotOverview = lazy(lazyImport(() => import('./pages/BotOverview')));
 const ReplicaCompare = lazy(lazyImport(() => import('./pages/ReplicaCompare')));
 const LeanOracle = lazy(lazyImport(() => import('./pages/LeanOracle')));
+const StrategyReport = lazy(lazyImport(() => import('./pages/StrategyReport')));
 const MobileApp = lazy(lazyImport(() => import('./mobile/MobileApp')));
 
 function AuthPrompt() {
@@ -115,6 +116,7 @@ function DesktopShell() {
               <Route path="/bot-overview" element={<BotOverview />} />
               <Route path="/replica-compare" element={<ReplicaCompare />} />
               <Route path="/lean" element={<LeanOracle />} />
+              <Route path="/strategy-report" element={<StrategyReport />} />
               <Route path="/learning" element={<Navigate to="/settings" replace />} />
               <Route path="/customization" element={<Navigate to="/settings" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

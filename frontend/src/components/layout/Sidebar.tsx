@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Bot, CandlestickChart, Settings, ChevronDown, Play, Square, ScrollText, Wrench, LayoutList, FlaskConical, Cpu, GitCompare, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Bot, CandlestickChart, Settings, ChevronDown, Play, Square, ScrollText, Wrench, LayoutList, FlaskConical, Cpu, GitCompare, ShieldCheck, FileBarChart } from 'lucide-react';
 import { useAccountStore } from '../../store/account-store';
 import { useUiStore, type BotStatus } from '../../store/ui-store';
 import { api } from '../../lib/api';
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/bot-config', icon: Wrench, label: 'Bot Config' },
   { to: '/replica-compare', icon: GitCompare, label: 'Replica Kiyas' },
   { to: '/lean', icon: ShieldCheck, label: 'LEAN' },
+  { to: '/strategy-report', icon: FileBarChart, label: 'Strateji Raporu' },
 ];
 
 function fmt(n: number | undefined) {
