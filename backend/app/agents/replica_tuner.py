@@ -165,11 +165,17 @@ def _decide(metrics: dict, ts: int) -> dict:
     previous = _last_adjusted.get(channel)
     if previous and previous["signature"] == signature:
         return {**base, "action": "hold", "reason": "yeni_veri_yok", "steps": 0}
-    if previous and ts - previous["ts"] < MIN_ADJUST_INTERVAL_SEC * 1000:
+    # Uretim-0 acil durumu: gercek kaynak akarken replica HIC uretmiyorsa esikler
+    # ekstremde takilmis demektir -> saatlik ayar-bekleme freni atlanir (imza
+    # kontrolu kalir: yeni gercek veri gelmeden ust uste gevsetmez).
+    urgent_zero = replica == 0
+    if previous and not urgent_zero and ts - previous["ts"] < MIN_ADJUST_INTERVAL_SEC * 1000:
         return {**base, "action": "hold", "reason": "ayar_bekleme_suresi", "steps": 0}
 
     # Oncelik merdiveni
-    if eff_prec < PRECISION_FLOOR:
+    if urgent_zero:
+        sign, action, gap, reason = -1, "loosen", COVERAGE_TARGET, "uretim_yok"
+    elif eff_prec < PRECISION_FLOOR:
         sign, action, gap, reason = +1, "tighten", PRECISION_TARGET - eff_prec, "dusuk_isabet_taban"
     elif eff_cov < COVERAGE_TARGET - TARGET_BAND:
         sign, action, gap, reason = -1, "loosen", COVERAGE_TARGET - eff_cov, "dusuk_kapsama"
