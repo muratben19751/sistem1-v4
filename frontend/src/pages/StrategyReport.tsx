@@ -6,11 +6,11 @@ interface ReportRow {
   strategy: string;
   status: 'closed' | 'stopped';
   accountId: number;
-  trades: number;
+  trades: number | null;
   wins: number;
   losses: number;
-  pnl: number;
-  fee: number;
+  pnl: number | null;
+  fee: number | null;
   winRate: number | null;
   firstTrade: string | null;
   lastTrade: string | null;
@@ -88,8 +88,8 @@ export default function StrategyReport() {
     else { setSortKey(key); setSortDir('desc'); }
   };
 
-  const totalPnl = filtered.reduce((s, r) => s + r.pnl, 0);
-  const totalTrades = filtered.reduce((s, r) => s + r.trades, 0);
+  const totalPnl = filtered.reduce((s, r) => s + (r.pnl ?? 0), 0);
+  const totalTrades = filtered.reduce((s, r) => s + (r.trades ?? 0), 0);
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-3">
@@ -157,12 +157,14 @@ export default function StrategyReport() {
                 <td className="px-2.5 py-1.5 num text-ink-400 whitespace-nowrap" title={`ilk işlem ${r.firstTrade ?? '--'} · son işlem ${r.lastTrade ?? '--'}${r.endedAt ? ` · arşiv ${r.endedAt}` : ''}`}>
                   {dt(r.firstTrade)} → {dt(r.lastTrade)}
                 </td>
-                <td className="px-2.5 py-1.5 num text-right text-ink-100" title={`${r.wins}W / ${r.losses}L`}>{r.trades}</td>
+                <td className="px-2.5 py-1.5 num text-right text-ink-100" title={r.trades != null ? `${r.wins}W / ${r.losses}L` : 'işlem geçmişi sonraki stratejiyle birleşti (arşivleme öncesi dönem)'}>
+                  {r.trades != null ? r.trades : <span className="text-ink-700">--</span>}
+                </td>
                 <td className="px-2.5 py-1.5 num text-right">
                   {r.winRate != null ? <span className={r.winRate >= 50 ? 'text-up' : 'text-down'}>{r.winRate.toFixed(1)}%</span> : '--'}
                 </td>
-                <td className={`px-2.5 py-1.5 num text-right ${cl(r.pnl)}`}>{formatUsd(r.pnl)}</td>
-                <td className="px-2.5 py-1.5 num text-right text-ink-500">{formatUsd(r.fee)}</td>
+                <td className={`px-2.5 py-1.5 num text-right ${r.pnl != null ? cl(r.pnl) : 'text-ink-700'}`}>{r.pnl != null ? formatUsd(r.pnl) : '--'}</td>
+                <td className="px-2.5 py-1.5 num text-right text-ink-500">{r.fee != null ? formatUsd(r.fee) : '--'}</td>
                 <td className="px-2.5 py-1.5 num text-right text-ink-300">{r.btWinRate != null ? `${r.btWinRate.toFixed(0)}%` : '--'}</td>
                 <td className="px-2.5 py-1.5 num text-right text-ink-300">{r.btCalmar != null ? r.btCalmar.toFixed(2) : '--'}</td>
                 <td className="px-2.5 py-1.5 num text-right">

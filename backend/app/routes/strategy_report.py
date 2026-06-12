@@ -33,7 +33,7 @@ GROUP BY account_name, account_id
 """
 
 _STOPPED_SQL = """
-SELECT r.strategy_name AS strategy, a.id AS account_id, r.deployed_at,
+SELECT r.strategy_name AS strategy, a.id AS account_id, MAX(r.deployed_at) AS deployed_at,
   COUNT(t.id) AS trades,
   SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END) AS wins,
   SUM(CASE WHEN t.pnl <= 0 THEN 1 ELSE 0 END) AS losses,
@@ -42,7 +42,7 @@ SELECT r.strategy_name AS strategy, a.id AS account_id, r.deployed_at,
   MIN(t.opened_at) AS first_trade,
   MAX(t.closed_at) AS last_trade
 FROM optimizer_results r
-JOIN accounts a ON a.name = r.strategy_name
+LEFT JOIN accounts a ON a.name = r.strategy_name
 LEFT JOIN trades t ON t.account_id = a.id AND t.status = 'closed'
 WHERE r.deploy_state = 'stopped'
 GROUP BY r.strategy_name, a.id
@@ -63,18 +63,21 @@ GROUP BY r.strategy_name
 def _row(source: str, r, bt: dict | None) -> dict:
     trades = int(r["trades"] or 0)
     wins = int(r["wins"] or 0)
+    # Hesabi yeniden kullanilmis (arsiv oncesi donem) durdurulmus deploy: islem
+    # gecmisi sonraki stratejiyle birlesti, geri ayristirilamaz -> istatistik yok.
+    untracked = source == "stopped" and r["account_id"] is None
     return {
         "strategy": r["strategy"],
         "status": source,
         "accountId": r["account_id"],
-        "trades": trades,
+        "trades": None if untracked else trades,
         "wins": wins,
         "losses": int(r["losses"] or 0),
-        "pnl": round(float(r["pnl"] or 0.0), 2),
-        "fee": round(float(r["fee"] or 0.0), 2),
+        "pnl": None if untracked else round(float(r["pnl"] or 0.0), 2),
+        "fee": None if untracked else round(float(r["fee"] or 0.0), 2),
         "winRate": round(wins / trades * 100, 1) if trades > 0 else None,
         "firstTrade": r["first_trade"],
-        "lastTrade": r["last_trade"],
+        "lastTrade": r["last_trade"] or (r["deployed_at"] if "deployed_at" in r.keys() else None),
         "endedAt": r["ended_at"] if "ended_at" in r.keys() else None,
         "btCalmar": bt["calmar"] if bt else None,
         "btWinRate": bt["win_rate"] if bt else None,
