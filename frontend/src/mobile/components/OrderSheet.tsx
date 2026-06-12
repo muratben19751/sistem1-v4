@@ -113,7 +113,7 @@ export default function OrderSheet() {
             </span>
           </div>
           <div className="mt-0.5 text-[11px] text-ink-400">
-            {account && <>İşlem büyüklüğü ≈ {formatUsd(notional)} · {account.bot_leverage || 2}x · TP {account.tp_percent || 5}% / SL {account.sl_percent || 3}%</>}
+            {account && <>İşlem büyüklüğü ≈ {formatUsd(notional)} · {account.bot_leverage || 2}x · TP {Number(account.tp_percent || 5).toFixed(2)}% / SL {Number(account.sl_percent || 3).toFixed(2)}%</>}
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">

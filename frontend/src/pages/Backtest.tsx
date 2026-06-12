@@ -362,7 +362,7 @@ export function OptimizerLab() {
           </div>
           {cfg && (
             <div className="border-t border-white/5 p-3 text-[10px] text-ink-300 space-y-2">
-              <div className="text-ink-400">{selected?.strategy_name} · kaynak: <span className="text-ink-100">{cfg.signalSource}</span> · lev {cfg.leverage}x · {(cfg.tpAtrMult || cfg.slAtrMult) ? <span className="text-info">TP {Number(cfg.tpAtrMult).toFixed(1)}×ATR / SL {Number(cfg.slAtrMult).toFixed(1)}×ATR ({cfg.atrTimeframe ?? '15'}m)</span> : <>TP {Number(cfg.tpPercent).toFixed(1)}% / SL {Number(cfg.slPercent).toFixed(1)}%</>} · minScore {Number(cfg.longMinScore).toFixed(1)} · maxPos {cfg.maxPositions}</div>
+              <div className="text-ink-400">{selected?.strategy_name} · kaynak: <span className="text-ink-100">{cfg.signalSource}</span> · lev {cfg.leverage}x · {(cfg.tpAtrMult || cfg.slAtrMult) ? <span className="text-info">TP {Number(cfg.tpAtrMult).toFixed(1)}×ATR / SL {Number(cfg.slAtrMult).toFixed(1)}×ATR ({cfg.atrTimeframe ?? '15'}m)</span> : <>TP {Number(cfg.tpPercent).toFixed(2)}% / SL {Number(cfg.slPercent).toFixed(2)}%</>} · minScore {Number(cfg.longMinScore).toFixed(1)} · maxPos {cfg.maxPositions}</div>
               {(cfg.hourStart != null && cfg.hourEnd != null) || (Array.isArray(cfg.allowedDays) && cfg.allowedDays.length > 0) ? (
                 <div className="text-teal-400">zaman:
                   {cfg.hourStart != null && cfg.hourEnd != null && <span> {String(cfg.hourStart).padStart(2, '0')}:00–{String(cfg.hourEnd).padStart(2, '0')}:00 UTC</span>}

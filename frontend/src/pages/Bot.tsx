@@ -195,7 +195,7 @@ export default function Bot() {
             <ConfigItem label="SHORT" value={account.short_min_score} />
             <ConfigItem label="LEV" value={`${account.bot_leverage}x`} />
             <ConfigItem label="POS" value={account.max_positions} />
-            <ConfigItem label="TP/SL PRICE" value={`${account.tp_percent}/${account.sl_percent}%`} />
+            <ConfigItem label="TP/SL PRICE" value={`${Number(account.tp_percent).toFixed(2)}/${Number(account.sl_percent).toFixed(2)}%`} />
             <ConfigItem label="DD" value={account.max_drawdown_enabled ? `${account.max_drawdown}%` : 'OFF'} />
             <ConfigItem label="SCAN" value={`${account.scan_interval}s`} />
             <ConfigItem label="SRC" value={(account.signal_source || 'scanner').toUpperCase()} />

@@ -315,11 +315,11 @@ export default function BotOverview() {
       case 'max_positions':
         return acc.max_positions;
       case 'tp_percent':
-        return `${acc.tp_percent}%`;
+        return `${Number(acc.tp_percent ?? 0).toFixed(2)}%`;
       case 'sl_percent':
-        return `${acc.sl_percent}%`;
+        return `${Number(acc.sl_percent ?? 0).toFixed(2)}%`;
       case 'position_size':
-        return `${acc.position_size_pct ?? 2}%`;
+        return `${Number(acc.position_size_pct ?? 2).toFixed(2)}%`;
       case 'scan_interval':
         return `${acc.scan_interval}s`;
       case 'scans':
