@@ -479,7 +479,7 @@ async def deploy(request: Request):
         conn.execute(
             """
             INSERT INTO bot_configs (account_id, long_min_score, short_min_score, leverage, max_positions, tp_percent, sl_percent, max_drawdown, max_drawdown_enabled, signal_source, position_size_pct, enabled_rules)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 50, 1, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 50, 0, ?, ?, ?)
             """,
             (account_id, _clamp_score(c.get("longMinScore"), 3), _clamp_score(c.get("shortMinScore"), -3), leverage, max_positions,
              _clamp_pct(c.get("tpPercent"), 5), _clamp_pct(c.get("slPercent"), 3), str(c.get("signalSource") or "all"), _clamp_pct(c.get("positionSizePct"), 3), enabled_rules),

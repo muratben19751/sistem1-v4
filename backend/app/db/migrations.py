@@ -640,4 +640,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("041-bot-logs-id-index", """
         CREATE INDEX IF NOT EXISTS idx_bot_logs_account_id_id ON bot_logs(account_id, id DESC);
     """),
+    ("042-max-drawdown-default-off", """
+        UPDATE bot_configs SET max_drawdown_enabled = 0;
+    """),
 ]

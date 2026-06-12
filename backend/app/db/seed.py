@@ -38,7 +38,7 @@ def seed_accounts():
             account_id = cur.lastrowid
             c = acc["config"]
             conn.execute(
-                "INSERT INTO bot_configs (account_id, long_min_score, short_min_score, leverage, max_positions, tp_percent, sl_percent, max_drawdown, max_drawdown_enabled, scan_interval, enabled_rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                "INSERT INTO bot_configs (account_id, long_min_score, short_min_score, leverage, max_positions, tp_percent, sl_percent, max_drawdown, max_drawdown_enabled, scan_interval, enabled_rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                 (account_id, c["long_min_score"], c["short_min_score"], c["leverage"], c["max_positions"],
                  c["tp_percent"], c["sl_percent"], c["max_drawdown"], c["scan_interval"], c.get("enabled_rules")),
             )

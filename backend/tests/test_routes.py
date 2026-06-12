@@ -126,7 +126,7 @@ class TestAccountsContent:
 
 
 class TestOptimizerDeploy:
-    async def test_new_deployment_enables_default_drawdown_guard(self, client, db, monkeypatch):
+    async def test_new_deployment_keeps_drawdown_guard_disabled(self, client, db, monkeypatch):
         from app.routes import optimizer
 
         config = {
@@ -157,7 +157,8 @@ class TestOptimizerDeploy:
                 "SELECT max_drawdown, max_drawdown_enabled FROM bot_configs WHERE account_id = ?",
                 (account_id,),
             ).fetchone()
-            assert (cfg["max_drawdown"], cfg["max_drawdown_enabled"]) == (50, 1)
+            # Politika (12 Haz 2026): max drawdown varsayilan KAPALI; kullanici isterse acar.
+            assert (cfg["max_drawdown"], cfg["max_drawdown_enabled"]) == (50, 0)
         finally:
             if account_id is not None:
                 db.execute("DELETE FROM paper_wallets WHERE account_id = ?", (account_id,))

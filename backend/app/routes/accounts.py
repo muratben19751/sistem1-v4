@@ -493,7 +493,7 @@ async def create_account(request: Request):
         conn.execute(
             """
             INSERT INTO bot_configs (account_id, long_min_score, short_min_score, leverage, max_positions, tp_percent, sl_percent, max_drawdown, max_drawdown_enabled, scan_interval)
-            VALUES (?, 5, -5, ?, 3, 5, 3, 50, 1, 30)
+            VALUES (?, 5, -5, ?, 3, 5, 3, 50, 0, 30)
             """,
             (new_id, parsed_leverage),
         )
