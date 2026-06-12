@@ -40,7 +40,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: 'signals', label: 'Signals', align: 'right', sortable: true },
   { key: 'orders', label: 'Orders', align: 'right', sortable: true },
   { key: 'last_scan', label: 'Last Scan', align: 'right', sortable: false },
-  { key: 'started_at', label: 'Started', align: 'right', sortable: false },
+  { key: 'started_at', label: 'Live (h)', align: 'right', sortable: false },
   { key: 'max_drawdown', label: 'Max DD %', align: 'right', sortable: true },
   { key: 'long_score', label: 'Long Min', align: 'right', sortable: true },
   { key: 'short_score', label: 'Short Min', align: 'right', sortable: true },
@@ -65,6 +65,14 @@ function formatTime(iso: string | null): string {
   if (!iso) return '--';
   const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
   return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatUptimeHours(iso: string | null): string {
+  if (!iso) return '--';
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  const hours = (Date.now() - d.getTime()) / 3_600_000;
+  if (!Number.isFinite(hours) || hours < 0) return '--';
+  return `${hours.toFixed(1)}h`;
 }
 
 function getSortValue(acc: any, key: string, status: BotStatus | undefined): number | string {
@@ -330,8 +338,11 @@ export default function BotOverview() {
         return status?.totalOrders ?? '--';
       case 'last_scan':
         return formatTime(status?.lastScan ?? null);
-      case 'started_at':
-        return formatTime(status?.startedAt ?? null);
+      case 'started_at': {
+        const startedAt = status?.startedAt ?? null;
+        if (!startedAt || !isRunning) return '--';
+        return <span title={`Başlangıç: ${formatTime(startedAt)}`}>{formatUptimeHours(startedAt)}</span>;
+      }
       case 'max_drawdown':
         return acc.max_drawdown_enabled ? `${acc.max_drawdown}%` : 'OFF';
       case 'long_score':
