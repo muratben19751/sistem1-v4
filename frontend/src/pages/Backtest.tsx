@@ -28,6 +28,7 @@ const OPT_COLS: { label: string; key: keyof OptimizerResultRow | null }[] = [
   { label: 'PnL', key: 'total_pnl' },
   { label: 'MaxDD', key: 'max_drawdown' },
   { label: 'Calmar', key: 'calmar' },
+  { label: 'OOS', key: 'oos_calmar' },
   { label: 'PF', key: 'profit_factor' },
   { label: 'Sharpe', key: 'sharpe_estimate' },
   { label: 'Tarih', key: 'tested_at' },
@@ -328,6 +329,16 @@ export function OptimizerLab() {
                     <td className={`px-2 py-1 text-[10px] num ${cl(r.total_pnl)}`}>{formatUsd(r.total_pnl)}</td>
                     <td className="px-2 py-1 text-[10px] num text-warn">-{r.max_drawdown.toFixed(1)}%</td>
                     <td className="px-2 py-1 text-[10px] num text-up font-medium">{r.calmar.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-[10px] num">
+                      {r.oos_calmar != null ? (
+                        <span
+                          title={`Hold-out OOS (GA'nin hic gormedigi son donem): Calmar ${r.oos_calmar.toFixed(2)} · ${r.oos_trades ?? 0} islem · WR ${(r.oos_win_rate ?? 0).toFixed(0)}% · PnL ${formatUsd(r.oos_total_pnl ?? 0)}`}
+                          className={r.oos_calmar >= 1 ? 'text-up' : r.oos_calmar >= 0 ? 'text-warn' : 'text-down'}
+                        >{r.oos_calmar.toFixed(2)}</span>
+                      ) : (
+                        <span title="OOS skoru yok (eski sonuc veya junk)" className="text-ink-700">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-[10px] num text-ink-300">{r.profit_factor.toFixed(2)}</td>
                     <td className="px-2 py-1 text-[10px] num text-ink-300">{r.sharpe_estimate.toFixed(2)}</td>
                     <td className="px-2 py-1 text-[9px] num text-ink-500 whitespace-nowrap">{localDt(r.tested_at)}</td>

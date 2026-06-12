@@ -33,6 +33,10 @@ export interface OptimizerResultRow {
   trades: number; wins: number; losses: number; total_pnl: number; win_rate: number;
   profit_factor: number; sharpe_estimate: number; max_drawdown: number; calmar: number; generation: number; tested_at: string;
   backtest_days?: number;
+  oos_trades?: number | null;
+  oos_total_pnl?: number | null;
+  oos_win_rate?: number | null;
+  oos_calmar?: number | null;
   deployed_account_id?: number | null;
   deployed_at?: string | null;
   live_account_id?: number | null;

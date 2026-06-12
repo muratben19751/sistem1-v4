@@ -103,6 +103,10 @@ WF_EMBARGO_DAYS = max(0.0, _env_float("OPTIMIZER_WF_EMBARGO_DAYS", 2))
 MIN_FOLD_TRADES = max(1, _env_int("OPTIMIZER_MIN_FOLD_TRADES", 5))
 MIN_VALID_FOLDS_FRAC = _clamp(_env_float("OPTIMIZER_MIN_VALID_FOLDS_FRAC", 0.6), 0.0, 1.0)
 ROBUST_LAMBDA = max(0.0, _env_float("OPTIMIZER_ROBUST_LAMBDA", 0.5))
+# Hold-out OOS: pencerenin son N gunu GA fitness'ina HIC katilmaz (secilim yanliligi
+# olmasin); yalnizca umut vadeden genomlar (fitness>0) bu dilimde BIR kez kosulup
+# sonuc oos_* kolonlarina raporlanir. 0 = kapali (eski davranis).
+OOS_DAYS = max(0, _env_int("OPTIMIZER_OOS_DAYS", 60))
 
 # ----- (2) junk / metrik saglamlastirma -----
 DD_FLOOR = max(0.0, _env_float("OPTIMIZER_DD_FLOOR", 1.0))        # % — calmar paydasi tabani
@@ -193,6 +197,9 @@ _log_ring: list = []
 # oldugundan ayni config + fold her zaman ayni metrigi verir. loop() pencereyi yeniden
 # sabitlerken temizlenir.
 metrics_cache: dict = {}
+
+# Hold-out OOS dilimi: loop() pencereyi sabitlerken doldurur; (start_ms, end_ms) | None
+oos_window: tuple | None = None
 
 # ProcessPool durumu
 _pool = None
@@ -688,15 +695,26 @@ def config_hash(g) -> str:
     return json.dumps(c, sort_keys=True)
 
 
-def save_result(g, ev, wf_detail: dict) -> None:
+def _oos_calmar(oos: dict) -> float:
+    dd = max(DD_FLOOR, float(oos.get("maxDrawdown") or 0.0))
+    return _clamp(float(oos.get("totalPnlPct") or 0.0) / dd, -CALMAR_CAP, CALMAR_CAP)
+
+
+def save_result(g, ev, wf_detail: dict, oos: dict | None = None) -> None:
     cfg = to_strategy_config(g)
     cfg["_wf"] = wf_detail  # robustluk detayi; deploy/apply bunu yok sayar
+    if oos is not None:
+        cfg["_wf"]["oosDays"] = OOS_DAYS
     execute(
-        "INSERT INTO optimizer_results (strategy_name, config_json, trades, wins, losses, total_pnl, win_rate, avg_pnl, profit_factor, sharpe_estimate, avg_win, avg_loss, generation, max_drawdown, calmar, backtest_days) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
+        "INSERT INTO optimizer_results (strategy_name, config_json, trades, wins, losses, total_pnl, win_rate, avg_pnl, profit_factor, sharpe_estimate, avg_win, avg_loss, generation, max_drawdown, calmar, backtest_days, oos_trades, oos_total_pnl, oos_win_rate, oos_calmar) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             g.name, json.dumps(cfg), ev.trades, ev.wins, ev.losses, ev.totalPnl, ev.winRate,
             (ev.totalPnl / ev.trades if ev.trades > 0 else 0), ev.profitFactor, ev.sharpe, generation, ev.maxDrawdown, ev.calmar, BACKTEST_DAYS,
+            (int(oos.get("trades") or 0) if oos is not None else None),
+            (float(oos.get("totalPnl") or 0.0) if oos is not None else None),
+            (float(oos.get("winRate") or 0.0) if oos is not None else None),
+            (_round2(_oos_calmar(oos)) if oos is not None else None),
         ),
     )
 
@@ -708,7 +726,7 @@ def insight(message: str, type_: str = "info") -> None:
     )
 
 
-def record_result(g, combined: dict, wf_detail: dict, fitness: float) -> None:
+def record_result(g, combined: dict, wf_detail: dict, fitness: float, oos: dict | None = None) -> None:
     global evaluated, best_calmar
     ev = EvalResult(
         **{f.name: getattr(g, f.name) for f in Genome.__dataclass_fields__.values()},
@@ -716,7 +734,7 @@ def record_result(g, combined: dict, wf_detail: dict, fitness: float) -> None:
         winRate=combined["winRate"], profitFactor=combined["profitFactor"], sharpe=combined["sharpe"],
         maxDrawdown=combined["maxDrawdown"], calmar=combined["calmar"], fitness=fitness,
     )
-    save_result(g, ev, wf_detail)
+    save_result(g, ev, wf_detail, oos)
     evaluated += 1
     if combined["calmar"] > best_calmar and combined["trades"] >= MIN_TRADES and fitness > 0:
         best_calmar = combined["calmar"]
@@ -858,7 +876,21 @@ async def eval_genome(g, folds: list, prewarmed=None) -> None:
             metrics_cache[key] = m
         fold_metrics.append(m)
     combined, wf_detail, fitness = aggregate_folds(fold_metrics, g)
-    record_result(g, combined, wf_detail, fitness)
+    oos = None
+    # OOS yalnizca raporlama icindir, fitness'a ASLA karismaz. Junk genomlar
+    # (fitness<=0 veya az islem) icin maliyete girilmez.
+    if oos_window and running and fitness > 0 and combined["trades"] >= MIN_TRADES:
+        key = (config_hash(g), "oos")
+        if key in metrics_cache:
+            oos = metrics_cache[key]
+        else:
+            try:
+                oos = await _backtest_metrics(_params_for(g, oos_window[0], oos_window[1]))
+                metrics_cache[key] = oos
+            except Exception as err:  # noqa: BLE001
+                emit_log("error", f"{g.name} OOS backtest hatasi: {err}")
+                oos = None
+    record_result(g, combined, wf_detail, fitness, oos)
 
 
 async def evaluate_generation(genomes: list, folds: list) -> None:
@@ -947,10 +979,18 @@ async def loop() -> None:
     loop_active = True
     window_end_ms = _now_ms()
     window_start_ms = window_end_ms - BACKTEST_DAYS * 86_400_000
-    folds = build_folds(window_start_ms, window_end_ms)
+    global oos_window
+    fit_end_ms = window_end_ms
+    oos_window = None
+    if OOS_DAYS > 0:
+        oos_start_ms = window_end_ms - OOS_DAYS * 86_400_000
+        fit_end_ms = oos_start_ms - WF_EMBARGO_DAYS * 86_400_000
+        oos_window = (int(oos_start_ms), int(window_end_ms))
+    folds = build_folds(window_start_ms, fit_end_ms)
     metrics_cache.clear()
     fold_desc = " | ".join(f"{_day(fs)}->{_day(fe)}" for fs, fe in folds)
-    emit_log("info", f"Pencere {BACKTEST_DAYS}g, {len(folds)} fold (embargo {WF_EMBARGO_DAYS}g): {fold_desc}")
+    oos_desc = f" + OOS {_day(oos_window[0])}->{_day(oos_window[1])} (fitness'a katilmaz)" if oos_window else ""
+    emit_log("info", f"Pencere {BACKTEST_DAYS}g, {len(folds)} fold (embargo {WF_EMBARGO_DAYS}g): {fold_desc}{oos_desc}")
     if _pool_enabled():
         emit_log("info", f"ProcessPool: {WORKER_COUNT} worker (mod={PROCESS_POOL_MODE}).")
     try:

@@ -643,4 +643,10 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("042-max-drawdown-default-off", """
         UPDATE bot_configs SET max_drawdown_enabled = 0;
     """),
+    ("043-optimizer-oos-columns", """
+        ALTER TABLE optimizer_results ADD COLUMN oos_trades INTEGER;
+        ALTER TABLE optimizer_results ADD COLUMN oos_total_pnl REAL;
+        ALTER TABLE optimizer_results ADD COLUMN oos_win_rate REAL;
+        ALTER TABLE optimizer_results ADD COLUMN oos_calmar REAL;
+    """),
 ]

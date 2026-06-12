@@ -112,6 +112,7 @@ def _result_conds(prefix: str, only_year: bool, hide_junk: bool) -> str:
 def get_optimizer_results(limit: int = 50, unique: bool = False, only_year: bool = False, hide_junk: bool = False):
     cols = """r.id, r.strategy_name, r.config_json, r.trades, r.wins, r.losses, r.total_pnl, r.win_rate,
              r.profit_factor, r.sharpe_estimate, r.max_drawdown, r.calmar, r.generation, r.tested_at, r.backtest_days,
+             r.oos_trades, r.oos_total_pnl, r.oos_win_rate, r.oos_calmar,
              r.deployed_account_id, r.deployed_at, r.deploy_state, a.id AS live_account_id, a.name AS live_account_name,
              bc.bot_enabled AS live_bot_enabled"""
     if not unique:
