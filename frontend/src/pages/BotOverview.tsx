@@ -42,6 +42,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: 'last_scan', label: 'Last Scan', align: 'right', sortable: false },
   { key: 'started_at', label: 'Live (h)', align: 'right', sortable: false },
   { key: 'max_drawdown', label: 'Max DD %', align: 'right', sortable: true },
+  { key: 'dd_guard', label: 'DD Guard', align: 'right', sortable: true },
   { key: 'long_score', label: 'Long Min', align: 'right', sortable: true },
   { key: 'short_score', label: 'Short Min', align: 'right', sortable: true },
   { key: 'actions', label: '', align: 'right', alwaysVisible: true, sortable: false },
@@ -58,7 +59,7 @@ function loadSavedColumns(): string[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return ALL_COLUMNS.filter((c) => !['initial_balance', 'winning', 'losing', 'max_drawdown', 'long_score', 'short_score', 'scan_interval', 'started_at'].includes(c.key)).map((c) => c.key);
+  return ALL_COLUMNS.filter((c) => !['initial_balance', 'winning', 'losing', 'dd_guard', 'long_score', 'short_score', 'scan_interval', 'started_at'].includes(c.key)).map((c) => c.key);
 }
 
 function formatTime(iso: string | null): string {
@@ -110,7 +111,8 @@ function getSortValue(acc: any, key: string, status: BotStatus | undefined): num
     case 'scans': return status?.totalScans ?? 0;
     case 'signals': return status?.totalSignals ?? 0;
     case 'orders': return status?.totalOrders ?? 0;
-    case 'max_drawdown': return acc.max_drawdown ?? 0;
+    case 'max_drawdown': return acc.max_drawdown_realized ?? 0;
+    case 'dd_guard': return acc.max_drawdown_enabled ? 1 : 0;
     case 'long_score': return acc.long_min_score ?? 0;
     case 'short_score': return acc.short_min_score ?? 0;
     default: return 0;
@@ -343,8 +345,15 @@ export default function BotOverview() {
         if (!startedAt || !isRunning) return '--';
         return <span title={`Başlangıç: ${formatTime(startedAt)}`}>{formatUptimeHours(startedAt)}</span>;
       }
-      case 'max_drawdown':
-        return acc.max_drawdown_enabled ? `${acc.max_drawdown}%` : 'OFF';
+      case 'max_drawdown': {
+        const dd = acc.max_drawdown_realized ?? 0;
+        if (dd <= 0) return <span className="text-ink-500">0%</span>;
+        return <span className={dd >= 20 ? 'text-down' : dd >= 10 ? 'text-warn' : 'text-ink-200'} title="Equity geçmişinde yaşanan en büyük tepe-dip düşüşü">-{dd.toFixed(1)}%</span>;
+      }
+      case 'dd_guard':
+        return acc.max_drawdown_enabled
+          ? <span className="text-[9px] text-up" title={`Devre kesici açık (eşik %${acc.max_drawdown})`}>ON {acc.max_drawdown}%</span>
+          : <span className="text-[9px] text-ink-500">OFF</span>;
       case 'long_score':
         return acc.long_min_score;
       case 'short_score':

@@ -30,6 +30,7 @@ interface Account {
   max_drawdown_enabled: number;
   peak_equity?: number;
   current_drawdown?: number;
+  max_drawdown_realized?: number;
   wr_scalp?: number;
   n_scalp?: number;
   wr_swing?: number;

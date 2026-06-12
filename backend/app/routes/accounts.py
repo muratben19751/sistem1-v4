@@ -229,11 +229,15 @@ def attach_drawdowns(rows: list[dict]) -> list[dict]:
     if len(ids) == 0:
         return rows
     placeholders = ",".join("?" for _ in ids)
+    # peak: en yuksek equity; max_dd: equity gecmisinde yasanan EN BUYUK tepe-dip dususu
+    # (her snapshot o ana kadarki peak'e gore drawdown'u kaydeder -> MAX(drawdown)).
     peak_rows = query_all(
-        f"SELECT account_id, MAX(equity) as peak FROM equity_snapshots WHERE account_id IN ({placeholders}) GROUP BY account_id",
+        f"SELECT account_id, MAX(equity) as peak, MAX(drawdown) as max_dd "
+        f"FROM equity_snapshots WHERE account_id IN ({placeholders}) GROUP BY account_id",
         ids,
     )
     peak_map = {p["account_id"]: (p["peak"] if p["peak"] is not None else 0) for p in peak_rows}
+    max_dd_map = {p["account_id"]: (p["max_dd"] if p["max_dd"] is not None else 0) for p in peak_rows}
     for row in rows:
         current = float(row.get("account_equity") if row.get("account_equity") is not None
                         else row.get("wallet_balance") if row.get("wallet_balance") is not None
@@ -242,8 +246,11 @@ def attach_drawdowns(rows: list[dict]) -> list[dict]:
         snapshot_peak = peak_map.get(row["id"], 0)
         peak = max(initial, snapshot_peak, current)
         drawdown = max(0, ((peak - current) / peak) * 100) if peak > 0 else 0
+        # Yasanan max DD: gecmis snapshot'lardaki en buyuk + simdiki anlik dususun maksimumu.
+        realized_max_dd = max(float(max_dd_map.get(row["id"], 0) or 0), drawdown)
         row["peak_equity"] = _js_round(peak * 100) / 100
         row["current_drawdown"] = _js_round(drawdown * 100) / 100
+        row["max_drawdown_realized"] = _js_round(realized_max_dd * 100) / 100
     return rows
 
 
